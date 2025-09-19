@@ -1,0 +1,267 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2015-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-11-10                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+// TODO - Need better way to zero out for zeroPrefix = true cases . Currently it flags missing files.
+
+
+///
+/// \brief Take necessary action to hide the button specified by the image suffix argument
+///        For the first 7, Zero out the first match amongst the suffix arg specific
+///        For the remaining, Change the specified prefix assignment in the UIBasicWnd::OnCreate function to use the ending NULL instead
+///
+HideOldButtons = function(_)
+{
+	$$(_, 1, `Get the user's selection of buttons to hide`)
+	const selection = Exe.GetUserInput('$hiddenButtons', D_MultiChoice, "Hide Buttons", "Choose the buttons to be hidden", [], {choices: this.Keys});
+	if (selection === false || selection.isEmpty())
+		Cancel("No buttons hidden");
+
+	$$(_, 2, `Iterate and zero out each button (depending on zeroPrefix)`)
+	for (const key of selection)
+	{
+		$$(_, 2.1, `Extract the essential data for ${key}`)
+		const data = this.Data.get(key);
+
+		if (!data.zeroPrefix)
+		{
+			$$(_, 2.2, `If there is no zero prefix then we can simply zero it out (i.e. string itself can be manipulated)`)
+			Exe.SetInt8(data.strPhy, 0);
+		}
+		else
+		{
+			///////////////////////////////////////////////
+			// If zeroPrefix is present we need to alter the location where the string is referenced.
+			// First we need to find that location
+			////////////////////////////////////////////////
+
+			if (!CACHE.has('HOB_AssignSkill'))
+			{
+				$$(_, 2.3, `Find the string 'skill' (needed since some prefixes are matching multiple areas)`)
+				const refAddr = Exe.FindText("skill");
+				if (refAddr < 0)
+					throw Error("'skill' not found");
+
+				const refHex = refAddr.toHex();
+
+				$$(_, 2.4, `Find where 'skill' is assigned (inside UIBasicWnd::OnCreate)`)
+				let code = MOV([]); //mov dword ptr
+				let addr = Exe.FindHex(refHex + code);
+
+				if (addr < 0)
+				{
+					code = LEA(); //lea regA
+					addr = Exe.FindHex(refHex + code);
+				}
+				if (addr < 0)
+					throw Error("'skill' not assigned");
+
+				$$(_, 2.5, `Save the address of the 'skill' assignment & the code used as prefix`)
+				CACHE.put('HOB_AssignSkill', addr);
+				CACHE.put('HOB_Prefix', code);
+			}
+
+			$$(_, 2.6, `Extract the Virtual address of the prefix`)
+			const {strings, strVir} = this.Data.get(key);
+
+			$$(_, 2.7, `Find the prefix assignment after 'skill' assignment`)
+			const str = strings[0];
+			const HOB_AssignSkill = CACHE.get('HOB_AssignSkill');
+			const addr = Exe.FindHex(strVir.toHex() + CACHE.get('HOB_Prefix'), HOB_AssignSkill - 0x80, HOB_AssignSkill + (Exe.BuildDate > 20140210 ? 0x200 : 0x50));
+			if (addr < 0)
+				throw Error(`'${str}' not assigned`);
+
+			$$(_, 2.8, `Change the address to point to the ending NULL`)
+			///       (Not the ideal way to fix since it still flags missing file errors)
+			Exe.SetInt32(addr, strVir + str.length);
+		}
+	}
+
+	return true;
+};
+
+
+///
+/// \brief Disable for Unsupported Clients - Check for Button bmp
+///
+HideOldButtons.validate = function(patchName)
+{
+	const _ = `${patchName}.validate`;
+
+	$$(_, 1.1, `Ensure the client is infact using the older style of buttons`)
+	if (Exe.BuildDate > 20170000)
+		return false;
+
+	$$(_, 2, `Iterate and test for string existence and keep the keys only for valid ones`)
+	this.Keys = [];
+
+	for (const [key, data] of this.Data)
+	{
+		$$(_, 2.1, `Quest is only valid for 2010+`)
+		if (!ROC.Post2010 && key === "Quest")
+			return false;
+
+		$$(_, 2.2, `Find the first match amongst the strings specified for ${key}`)
+		for (const str of data.strings)
+		{
+			const addr = Exe.FindText(str, PHYSICAL, data.zeroPrefix);
+			if (addr > 0)
+			{
+				$$(_, 2.4, `When found save it into HOB_Data . Also save the VIRTUAL address if zeroPrefix is ON since we need it`)
+				data.strPhy = addr;
+				if (data.zeroPrefix)
+					data.strVir = Exe.Phy2Vir(addr);
+
+				$$(_, 2.5, `Push the key into the list`)
+				this.Keys.push(key);
+
+				break;
+			}
+		}
+	}
+
+	$$(_, 3, `Patch is valid if atleast 1 button is present`)
+	return !(this.Keys.isEmpty());
+};
+
+///
+/// \brief Data to be used in patches
+///
+HideOldButtons.Data = MakeMap(
+	'Stats', //also serves as Equip button for older clients
+	{
+		strings: ["info"],
+		zeroPrefix: true
+	},
+
+	'Equipment',
+	{
+		strings: ["equip"],
+		zeroPrefix: true
+	},
+
+	'Inventory',
+	{
+		strings: ["item"],
+		zeroPrefix: true
+	},
+
+	'Skill',
+	{
+		strings: ["skill"],
+		zeroPrefix: true
+	},
+
+	'Booking',
+	{
+		strings: [
+			"basic_interface\\booking",
+			"RO_menu_icon\\booking"
+		],
+		zeroPrefix: false
+	},
+
+	'Party',
+	{
+		strings: ["party"],
+		zeroPrefix: true
+	},
+
+	'Guild',
+	{
+		strings: ["guild"],
+		zeroPrefix: true
+	},
+
+	'Battleground',
+	{
+		strings: [
+			"basic_interface\\btn_battle_field",
+			"RO_menu_icon\\battle"
+		],
+		zeroPrefix: false
+	},
+
+	'Quest',
+	{
+		strings: ["quest"],
+		zeroPrefix: true
+	},
+
+	'WorldMap',
+	{
+		strings: ["map"],
+		zeroPrefix: true
+	},
+
+	'Navigation',
+	{
+		strings: [
+			"navigation_interface\\btn_Navigation",
+			"RO_menu_icon\\navigation"
+		],
+		zeroPrefix: false
+	},
+
+	'Options',
+	{
+		strings: [
+			"basic_interface\\btn_option"
+		],
+		zeroPrefix: false
+	},
+
+	'Bank',
+	{
+		strings: [
+			"basic_interface\\btn_bank",
+			"RO_menu_icon\\bank"
+		],
+		zeroPrefix: false
+	},
+
+	'Record',
+	{
+		strings: [
+			"replay_interface\\rec",
+			"RO_menu_icon\\rec"
+		],
+		zeroPrefix: false
+	},
+
+	'Rodex (Mail)',
+	{
+		strings: ["RO_menu_icon\\mail"],
+		zeroPrefix: false
+	},
+
+	'Achievement',
+	{
+		strings: ["RO_menu_icon\\achievement"],
+		zeroPrefix: false
+	}
+);

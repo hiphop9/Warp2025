@@ -1,0 +1,85 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Hanashi                                        *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software : you can redistribute it and/or modify          *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Hanashi, Andrei (4144)                                 *
+*   Created Date  : 2021-03-06                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Modify the color used for highlight inside UIShortCutWnd::OnDraw function
+///
+CustomSlotHLColor = function(_)
+{
+	$$(_, 1.1, `Find the code before the color PUSH`)
+	let code;
+	if (Exe.Version === 6)
+	{
+		code =
+			CMP(ROC.Post2010 ? ECX : EAX, -1) //cmp regA, -1 ; regA = ECX/EAX
+		+	JE(WCp)                           //je short _skip
+		+	(ROC.Post2010
+		?
+			MOV(EAX, [POS3WC])                //mov eax, dword ptr [offset#1]
+		:
+			LEA(ECX, [8, EAX])                //lea ecx, [8*eax]
+		)
+		;
+	}
+	else
+	{
+		code =
+			MOVZX(ECX, BYTE_PTR, [POS4WC])    //movzx ecx, byte ptr [offset#1]
+		+	IMUL(R32, R32, 0x1D)              //imul regA, regB, 1Dh
+		;
+	}
+	const addrs = Exe.FindHexN(code);
+	if (addrs.isEmpty())
+		throw Error("Prefix code missing");
+
+	const csize = code.byteCount();
+
+	$$(_, 1.2, `Now find the PUSH after it`)
+	code = PUSH(0xB4FFB4);             //push B4FFB4h
+
+	const addr = addrs.findAs( memAddr =>
+	{
+		const found = Exe.FindHex(code, memAddr + csize, memAddr + csize + 0x10);
+		if (found > 0)
+			return found;
+	});
+	if (!addr)
+		throw Error("Light Green PUSH missing");
+
+	$$(_, 2.1, `Get the new color from user`)
+	const varName = '$HSkillSColor';
+	const newColor = Exe.GetUserInput(varName, D_Color, "Highlight Color", "Select the new color", 0xB4FFB4, ROC.ClrSettings);
+	if (newColor === false)
+		Cancel("Highlight Color", "Light Green (#B4FFB4)");
+
+	$$(_, 2.2, `Replace the color`)
+	Exe.SetFromVar(addr + 1, varName);
+
+	return true;
+};

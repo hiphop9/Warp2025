@@ -1,0 +1,195 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Shinryo                                           *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo, Neo-Mind, Andre (4144)                        *
+*   Created Date  : 2020-11-10                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the string used for setting window title to user specified string.
+///        New string will be stored in the area currently holding an unused URL
+///
+CustomWinTitle = function(_)
+{
+	$$(_, 1.1, `Find the physical location of the unused URL string`)
+	let titlePhy = Exe.FindText("http://ro.hangame.com/login/loginstep.asp?prevURL=/NHNCommon/NHN/Memberjoin.asp", PHYSICAL);
+
+	$$(_, 1.2, `Find the string 'Ragnarok' or 'Ragnarok : Zero'`)
+	let oldTitle = "Ragnarok" + (ROC.IsZero ? " : Zero" : "");
+	let addr = Exe.FindText(oldTitle);
+	if (addr < 0 && ROC.IsZero)
+	{
+		oldTitle = "Ragnarok";
+		addr = Exe.FindText(oldTitle);
+	}
+	if (addr < 0)
+		throw Error(`'${oldTitle}' not found`);
+
+	$$(_, 1.3, `Find where it is assigned as the title`)
+	const code = MOV( [POS4WC], addr); //MOV DWORD PTR DS:[g_title], OFFSET addr; ASCII "Ragnarok" or "Ragnarok : Zero"
+
+	addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Title assignment not found");
+
+	$$(_, 2.1, `Get the new title from user`)
+	const varName = '$customWindowTitle';
+	const title = Exe.GetUserInput(varName, D_Text, "Client Window Title", "Enter the new title", oldTitle, {minLen:1 , maxLen: 60});//60 because URL is only that long
+	if (title === false)
+		Cancel("Title", oldTitle);
+
+	let titleVir;
+	if (titlePhy > 0)
+	{
+		$$(_, 2.2, `Overwrite URL with the received string`)
+		Exe.SetFromVar(titlePhy, varName);
+
+		$$(_, 2.3, `Get it's VIRTUAL address`)
+		titleVir = Exe.Phy2Vir(titlePhy);
+	}
+	else
+	{
+		$$(_, 2.4, `In case the URL was not found, Add the string instead`)
+		titleVir = Exe.AddFromVar(varName)[1];
+	}
+
+	$$(_, 2.5, `Update the string reference`)
+	Exe.SetInt32(addr + 6, titleVir);
+
+	return true;
+};
+
+///
+/// \brief Change the Style parameter used for CreateWindowExA CALL to include WS_SYSMENU
+///
+EnableSysMenu = function(_)
+{
+	$$(_, 1, `Ensure WINMKR is loaded`)
+	WINMKR.load();
+
+	$$(_, 2, `Construct the code to insert`)
+	const code =
+		MOV(EAX, [ESP, 0x10])  //mov eax, dword ptr [ARG.4] ; Style
+	+	OR(EAX, 0x80000)       //or eax, <WS_SYSMENU>
+	+	MOV([ESP, 0x10], EAX)  //mov dword ptr [ARG.4], eax
+	;
+
+	$$(_, 3, `Stage it`)
+	WINMKR.stage(_, code);
+
+	return true;
+};
+
+///
+/// \brief Undo the staging
+///
+EnableSysMenu.cleanup = patchName =>
+	WINMKR.unstage(patchName);
+
+///
+/// \brief Disable for old clients which already uses 0x02CA
+///
+EnableSysMenu.validate = IsPost2010;
+
+///
+/// \brief Change the Style parameter used for CreateWindowExA CALL to include WS_EX_TOOLWINDOW
+///
+UseMiniTitle = function(_)
+{
+	$$(_, 1, `Ensure WINMKR is loaded`)
+	WINMKR.load();
+
+	$$(_, 2, `Construct the code to insert`)
+	const code =
+		MOV(EAX, [ESP, 4])  //mov eax, dword ptr [ARG.1] ; ExtStyle
+	+	OR(EAX, 0x80)       //or eax, <WS_EX_TOOLWINDOW>
+	+	MOV([ESP, 4], EAX)  //mov dword ptr [ARG.1], eax
+	;
+
+	$$(_, 3, `Stage it`)
+	WINMKR.stage(_, code);
+
+	return true;
+};
+
+
+///
+/// \brief Changes the parameters for CreateWindowExA call to achieve borderless fullscreen window (skips adding border & frame
+///        as well as positioning at 0,0 when resolution requested == screen resolution)
+///
+BorderlessFSW = function(_)
+{
+	$$(_, 1.1, `Ensure WINMKR is loaded`)
+	WINMKR.load();
+
+	$$(_, 1.2, `Find the GetSystemMetrics function`)
+	const GetSysMetrics = Exe.FindFunc("GetSystemMetrics", "USER32.dll");
+	if (GetSysMetrics < 0)
+		throw Error("GetSystemMetrics missing");
+
+	$$(_, 2.1, `Construct the code to insert`)
+	let code =
+		PUSH_0                        //push <SM_CXSCREEN>
+	+	CALL([GetSysMetrics])         //call dword ptr [<&USER32.GetSysMetrics>]
+	+	CMP([ESP, 0x1C], EAX)         //cmp dword ptr [ARG.7], eax  ; Width
+	+	JL(Filler(1,1))               //jl short _next
+	+	MOV([Filler(2)], EAX)         //mov dword ptr [tmpLoc], eax
+	+	PUSH_1                        //push <SM_CYSCREEN>
+	+	CALL([GetSysMetrics])         //call dword ptr [<&USER32.GetSysMetrics>]
+	+	CMP([ESP, 0x20], EAX)         //cmp dword ptr [ARG.8], eax  ; height
+	+	JL(Filler(1,1))               //jl short _next
+	+	MOV([ESP, 0x20], EAX)         //mov dword ptr [ARG.8], eax
+	+	MOV(EAX, [Filler(2)])         //mov eax, dword ptr [tmpLoc]
+	+	MOV([ESP, 0x1C], EAX)         //mov dword ptr [ARG.7], eax  ; Width
+	+	MOV([ESP, 0x10], 0x90000000)  //mov dword ptr [ARG.4], WS_POPUP | WS_VISIBLE
+	+	XOR(EAX, EAX)                 //xor eax, eax
+	+	MOV([ESP, 0x14], EAX)         //mov dword ptr [ARG.5], eax ; X
+	+	MOV([ESP, 0x18], EAX)         //mov dword ptr [ARG.6], eax ; Y
+	+	JMP(4)                        //jmp short _next
+	+	ALL00                         //<tmpLoc>
+	;                                 // ; _next
+	const csize = code.byteCount();
+	const tmpLoc = csize - 4; //relative offset
+
+	$$(_, 2.2, `Fill in the blanks`)
+	code = SetFillTargets(code, 2, {'1,1' : csize});
+
+	$$(_, 3, `Stage it`)
+	WINMKR.stage(_, code, {2 : tmpLoc});
+
+	return true;
+};
+
+
+///
+/// \brief Undo the staging
+///
+_WMK_unstage = patchName =>
+	WINMKR.unstage(patchName);
+
+EnableSysMenu.cleanup = _WMK_unstage;
+UseMiniTitle.cleanup  = _WMK_unstage;
+BorderlessFSW.cleanup = _WMK_unstage;

@@ -1,0 +1,373 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Ai4rei/AN, Shinryo                                *
+*   Copyright (C) 2020-2023 Andrei Karas (4144)                            *
+*   Copyright (C) 2020-2023 X-EcutiOnner (xex.ecutionner@gmail.com)        *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANT??ILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Ai4rei/AN, Shinryo, Andrei (4144), X-EcutiOnner        *
+*   Created Date  : 2020-11-10                                             *
+*   Last Modified : 2023-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Modify CView::SetQuakeInfo and CView::SetQuake functions to return without assigning any values
+///
+NoEarthQuake = function(_)
+{
+	$$(_, 1.1, `Find the string '.BMP' or '.png'`)
+	let sufAddr = Exe.FindText(".BMP", CASE_INSENSITIVE);
+
+	if (sufAddr < 0 && Exe.BuildDate > 20180000)
+	{
+		sufAddr = Exe.FindText(".BMP", false);
+	}
+	if (sufAddr < 0 && Exe.BuildDate > 20180000)
+	{
+		sufAddr = Exe.FindText(".png", CASE_INSENSITIVE);
+	}
+
+	if (sufAddr < 0)
+		throw Error("Suffix not found");
+
+	$$(_, 1.2, `Find where it is PUSHed`)
+	///
+	let code = PUSH(sufAddr);         //push offset ".BMP" or ".png"
+
+	if (Exe.BuildDate > 20180200 && (
+			(ROC.IsRenewal && Exe.BuildDate < 20190600) ||
+			(!ROC.IsRenewal && Exe.BuildDate < 20190610)
+		)
+	)
+	{
+		code +=
+			LEA(ECX, [R32, POS2WC]);  //lea ecx, [regA + dispA]
+	}
+	else
+	{
+		code +=
+			MOV(ECX, R32);            //mov ecx, regA
+	}
+
+	let addrs = Exe.FindHexN(code);
+	if (addrs.isEmpty())
+		throw Error("'.BMP' / '.png' not used");
+
+	$$(_, 1.3, `Find the SetQuakeInfo call within 0x80 bytes before the PUSH`)
+	code = CALL(ALLWC); //call CView::SetQuakeInfo
+	if (Exe.Version === 6) //VC6
+	{
+		code +=
+			POP_R           //pop regA
+		+	POP_R           //pop regB
+		+	XOR(EAX, EAX)   //xor eax, eax
+		;
+	}
+	else //newer
+	{
+		code +=
+			XOR(EAX, EAX)   //xor eax, eax
+		+	JMP(POS2WC)     //jmp _next
+		;
+	}
+
+	const result = addrs.findAs( memAddr =>
+	{
+		const addr = Exe.FindLastHex(code, memAddr, memAddr - 0x100);
+		if (addr > 0)
+			return [addr, memAddr];
+	});
+	if (!result)
+		throw Error("SetQuakeInfo CALL not found");
+
+	let [quakeAddr, addr] = result;
+
+	$$(_, 1.4, `Goto the location of SetQuakeInfo`)
+	quakeAddr = Exe.GetTgtAddr(quakeAddr + 1, PHYSICAL);
+
+	$$(_, 1.5, `Change the first instruction to RETN 0C`)
+	Exe.SetHex(quakeAddr, RETN(0xC)); //retn 0Ch
+
+	$$(_, 2.1, `Find the SetQuake call be within 120h bytes before the PUSH`)
+	code =
+		PUSH_1             //push 1
+	+	CALL(ALLWC)        //call CView::SetQuake
+	;
+
+	if (Exe.Version === 6) //VC6
+	{
+		code +=
+			POP_R          //pop regA
+		+	POP_R          //pop regB
+		+	XOR(EAX, EAX)  //xor eax, eax
+		;
+		quakeAddr = Exe.FindHex(code, addr - 0x120, addr);
+	}
+	else //newer
+	{
+		code +=
+			XOR(EAX, EAX)  //xor eax, eax
+		+	JMP(POS2WC)    //jmp _next#2
+		;
+		quakeAddr = Exe.FindHex(code, addr - 0xC0, addr);
+	}
+
+	if (quakeAddr < 0)
+		throw Error("SetQuake CALL not found");
+
+	$$(_, 2.2, `Goto the location of SetQuake`)
+	quakeAddr = Exe.GetTgtAddr(quakeAddr + 3, PHYSICAL);
+
+	$$(_, 2.3, `Change the first instruction to RETN 14`)
+	Exe.SetHex(quakeAddr, RETN(0x14)); //retn 14h
+
+	return true;
+};
+
+///
+/// \brief Change the conditional jump to JMP for the comparison of g_useEffect with 0 in the wavy effect creation function
+///
+NoWavyScreen = function(_)
+{
+	$$(_, 1.1, `Find the string 'xmas_fild01.rsw'`)
+	let addr = Exe.FindText("xmas_fild01.rsw");
+	if (addr < 0)
+		throw Error("'xmas_fild01.rsw' not found");
+
+	$$(_, 1.2, `Find all locations where it is assigned to EAX`)
+	const addrs = Exe.FindHexN( MOV(EAX, addr) ) ;//mov eax, offset "xmas_fild01.rsw"
+	if (addrs.isEmpty())
+		throw Error("'xmas_fild01.rsw' assignment not found");
+
+	$$(_, 1.3, `Filter out the location where g_useEffect is assigned before the EAX assignment amongst the matches. It will be inside CGameMode::Initialize`)
+	const code = MOV([POS3WC], R32); //mov dword ptr [g_useEffect], regA
+
+	const effectAddr = addrs.findAs( memAddr =>
+	{
+		const found = Exe.FindHex(code, memAddr - 8, memAddr);
+		if (found > 0)
+			return (found + 2);
+	});
+	if (!effectAddr)
+		throw Error("'g_useEffect' assignment not found");
+
+	$$(_, 1.4, `Extract g_useEffect`)
+	const UseEffect = Exe.GetHex(effectAddr, 4);
+
+	$$(_, 2.1, `Find the comparison of g_useEffect with 0`)
+	const prefix =
+		MOV(ECX, R32)          //mov ecx, regB
+	+	CALL(ALLWC)            //call func#1
+	+	(Exe.Version > 6
+	?
+		CMP([UseEffect], 0)    //cmp dword ptr [g_useEffect], 0
+	:
+		MOV(EAX, [UseEffect])  //mov eax, dword ptr [g_useEffect]
+	+	TEST(EAX, EAX)         //test eax, eax
+	);
+
+	const suffix =
+		JE()                   //je _next
+	;
+
+	addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0)
+		throw Error("'g_useEffect' comparison not found");
+
+	$$(_, 2.2, `Change the conditional jump`)
+	Exe.SetJMP(addr + prefix.byteCount());
+
+	return true;
+};
+
+///
+/// \brief Disable for New clients since they use inverted effect now
+///
+NoWavyScreen.validate = () =>
+	Exe.BuildDate <= 20120516;
+
+///
+/// \brief Enforce the JNZ after comparison to disable Blind skills effect
+///        from blending darkness screen inside SkillEffect function.
+///
+NoBlindness = function(_)
+{
+	$$(_, 1, `Find the pattern after the comparison (which starts with the JNZ to be changed)`)
+	let code = JNZ(" ?? 01 00 00");          //jnz _skip
+
+	/*
+	let LaunchEffectPrimOffset, gPrimOffset = 0, mPrimOffset = 0;
+	*/
+
+	switch (Exe.Version)
+	{
+		case 6: //VC6
+		{
+			code +=
+				SUB(ESP, 0xC)                //sub esp, 0Ch
+			+	MOV(EDX, EBX)                //mov edx, ebx
+			+	MOV(ECX, ESP)                //mov ecx, esp
+			+	MOV(EAX, EBX)                //mov eax, ebx
+			+	PUSH(0x47)                   //push 47h ; ASCII 'G'
+			+	MOV([EBP, WCn], EBX)         //mov dword ptr [LOCAL.z], ebx
+			+	MOV([ECX], EDX)              //mov dword ptr [ecx], edx
+			+	MOV([EBP, WCn], EBX)         //mov dword ptr [LOCAL.y], ebx
+			+	MOV([EBP, WCn], EBX)         //mov dword ptr [LOCAL.x], ebx
+			+	MOV([ECX, 4], R32)           //mov dword ptr [ecx+4], regA
+			+	MOV([ECX, 8], R32)           //mov dword ptr [ecx+8], regB
+			+	MOV(ECX, ESI)                //mov ecx, esi
+			+	CALL(ALLWC)                  //call CRagEffect::LaunchEffectPrim
+			+	(!ROC.Post2010
+			?
+				MOV([POS3WC], EAX)           //mov dword ptr [g_prim], EAX
+			:                                //  OR
+				MOV([ESI, POS3WC], EAX)      //mov dword ptr [esi + CRagEffect.m_prim], eax
+			)
+			+	MOV(ECX, [EAX, POS2WC])      //mov ecx, dword ptr [eax + dispB]
+			;
+
+			/*
+			LaunchEffectPrimOffset = 37;
+			if (Exe.Version < 6)
+				gPrimOffset = 42;
+			else
+				mPrimOffset = [43, 4];
+			*/
+			break;
+		}
+		case 9:  //VC9 &
+		case 10: //VC10
+		{
+			const sreg = ROC.StkReg; //StkReg = EBP or ESP + const
+
+			code +=
+				FLDZ                        //fldz
+			+	SUB(ESP, 0xC)               //sub esp, 0ch
+			+	MOV(EAX, ESP)               //mov eax, esp
+			+	FST([sreg, WC])             //fst dword ptr [StkReg - var_C]
+			+	MOV(ECX, [sreg, WC])        //mov ecx, dword ptr [StkReg - var_C]
+			+	FST([sreg, WC])             //fst dword ptr [StkReg - var_8]
+			+	MOV(EDX, [sreg, WC])        //mov edx, dword ptr [StkReg - var_8]
+			+	FSTP([sreg, WC])            //fstp dword ptr [StkReg - var_4]
+			+	MOV([EAX], ECX)             //mov dword ptr [eax], ecx
+			+	MOV(ECX, [sreg, WC])        //mov ecx, dword ptr [StkReg - var_4]
+			+	MOV([EAX, 4], EDX)          //mov dword ptr [eax+4], edx
+			+	MOV([EAX, 8], ECX)          //mov dword ptr [eax+8], ecx
+			+	PUSH(0x47)                  //push 47h ; ASCII 'G'
+			+	MOV(ECX, ESI)               //mov ecx, esi
+			+	CALL(ALLWC)                 //call CRagEffect::LaunchEffectPrim
+			+	MOV([ESI, POS3WC], EAX)     //mov dword ptr [ESI + CRagEffect.m_prim], eax
+			+	OR([R32, POS2WC], 0x200)    //or dword ptr [regA + dispB], 200h
+			;
+
+			/*
+			if (ROC.HasFP)
+			{
+				LaunchEffectPrimOffset = 44;
+				mPrimOffset = [50, 4];
+			}
+			else
+			{
+				LaunchEffectPrimOffset = 50;
+				mPrimOffset = [56, 4];
+			}
+			*/
+			break;
+		}
+		case 11: //VC11
+		{
+			code +=
+				SUB(ESP, 0xC)                //sub esp, 0Ch
+			+	MOV(ECX, ESP)                //mov ecx, esp
+			+	MOV([EBP, WC], 0)            //mov dword ptr [LOCAL.z], 0
+			+	MOV([EBP, WC], 0)            //mov dword ptr [LOCAL.y], 0
+			+	MOVQ(XMM0, [EBP, WC])        //movq xmm0, qword ptr [LOCAL.x]
+			+	MOV([EBP, WC], 0)            //mov dword ptr [LOCAL.x], 0
+			+	MOV(EAX, [EBP, WC])          //mov eax, dword ptr [LOCAL.x]
+			+	MOVQ([ECX], XMM0)            //movq qword ptr [ecx], xmm0
+			+	MOV([ECX, 8], EAX)           //mov dword ptr [ecx+8], eax
+			+	PUSH(0x47)                   //push 47h ; ASCII 'G'
+			+	MOV(ECX, ESI)                //mov ecx, esi
+			+	CALL(ALLWC)                  //call CRagEffect::LaunchEffectPrim
+			+	MOV([ESI, POS3WC], EAX)      //mov dword ptr [esi + CRagEffect.m_prim], eax
+			+	OR([EAX, POS2WC], 0x200)     //or dword ptr [eax + dispB], 200h
+			;
+
+			/*
+			LaunchEffectPrimOffset = 52;
+			mPrimOffset = [58, 4];
+			*/
+			break;
+		}
+		default: //VC14.16
+		{
+			code +=
+				SUB(ESP, 0xC)                //sub esp, 0Ch
+			+	MOV([EBP, WC], 0)            //mov dword ptr [LOCAL.x], 0
+			+	MOV(EAX, [EBP, WC])          //mov eax, dword ptr [LOCAL.x]
+			+	MOV(ECX, ESP)                //mov ecx, esp
+			+	XORPS(XMM0, XMM0)            //xorps xmm0, xmm0
+			+	UNPCKLPS(XMM0, XMM0)         //unpcklps xmm0, xmm0
+			+	PUSH(0x47)                   //push 47h ; ASCII 'G'
+			+	MOVQ([ECX], XMM0)            //movq qword ptr [ecx], xmm0
+			+	MOV([ECX, 8], EAX)           //mov dword ptr [ecx+8], eax
+			+	MOV(ECX, ESI)                //mov ecx, esi
+			+	CALL(ALLWC)                  //call CRagEffect::LaunchEffectPrim
+			+	MOV([ESI, POS3WC], EAX)      //mov dword ptr [esi + CRagEffect.m_prim], eax
+			+	MOV(EDX, 4)                  //mov edx, 4
+			+	OR([EAX, POS2WC], 0x200)     //or dword ptr [eax + dispB], 200h
+			;
+
+			/*
+			LaunchEffectPrimOffset = 39;
+			mPrimOffset = [45, 4];
+			*/
+			break;
+		}
+	}
+
+	const addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Pattern not found");
+
+	/*
+	logRawFunc("CRagEffect_LaunchEffectPrim", addr, LaunchEffectPrimOffset);
+	if (gPrimOffset !== 0)
+	{
+		logVaVar("g_prim", addr, gPrimOffset);
+	}
+	if (mPrimOffset !== 0)
+	{
+		logField("CEffectPrim::m_prim", addr, mPrimOffset);
+	}
+	*/
+
+	$$(_, 2, `Enforce the jump`)
+	Exe.SetJMP(addr);
+
+	return true;
+};
+
+///
+/// \brief Disable for Unsupported Clients
+///
+NoBlindness.validate = () =>
+	Exe.BuildDate > 20020000;

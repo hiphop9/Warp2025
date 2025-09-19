@@ -1,0 +1,86 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2020-2024 X-EcutiOnner (xex.ecutionner@gmail.com)        *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144), X-EcutiOnner                            *
+*   Created Date  : 2021-03-06                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Zero out the system\mapInfo*.lub file strings so that it never gets loaded and therefore
+///        avoids displaying the map sign inside CMapInfoMgr function when Player enters map.
+///
+NoMapInfo = function(_)
+{
+	$$(_, 1, `Zero it out`)
+	Exe.SetInt8(this.LubAddr, 0);
+
+	$$(_, 2.1, `Find the CMapInfoMgr ErrorMsg function`)
+	const parts =
+	[//0
+		JZ(POS1WC)       //jz _skip
+
+	,//1
+		PUSH([EBP, WC])  //push dword ptr [LOCAL.x]
+	+	CALL(ALLWC)      //call CLua::OpenLibs
+	+	PUSH_0           //push 0
+	+	PUSH(POS4WC)     //push <lua_function_sub>
+
+	,//2
+		PUSH([EBP, WC])  //push dword ptr [LOCAL.x]
+	+	CALL()           //call lua_pushCclosure
+	]
+	;
+
+	const addr = Exe.FindHex(parts);
+	if (addr < 0)
+		throw Error("ErrorMsg function missing");
+
+	$$(_, 2.2, `Ensure the offsets are same`)
+	const partAddrs = MapAddrs(addr, parts);
+	if (Instr.FromAddr(partAddrs[1]).Disp !== Instr.FromAddr(partAddrs[2]).Disp)
+		throw Error("False match found");
+
+	/*
+	const openLibsOffset = 10;
+    const pushcclosureOffset = 25;
+    logRawFunc("luaL_openlibs", addr, openLibsOffset);
+    logRawFunc("lua_pushcclosure", addr, pushcclosureOffset);
+	*/
+
+	$$(_, 2.3, `Enforce the JZ`)
+	Exe.SetJMP(addr);
+
+	return true;
+};
+
+///
+/// \brief Disable for unsupported clients - Need the file name present
+///
+NoMapInfo.validate = function()
+{
+	const name = "system\\mapInfo_" + (ROC.IsRenewal ? "sak" : "true") + ".lub";
+	this.LubAddr = Exe.FindText(name, CASE_INSENSITIVE, PHYSICAL);
+	return (this.LubAddr > 0);
+};

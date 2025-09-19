@@ -1,0 +1,109 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-10-30                                             *
+*   Last Modified : 2024-08-07                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Convenience class for representing a ModR/M byte
+///
+if (typeof ModRM === 'undefined') //avoid redefinition
+{
+	ModRM = class
+	{
+		///
+		/// \brief Constructor
+		///
+		constructor(mod, ro, rm)
+		{
+			let data =
+				IsStr(ro)             ? ro :            // Check for WildCard + direct hex strings in RegOp
+				IsStr(rm)             ? rm :            // Check for WildCard + direct hex strings in RegM
+				arguments.length == 3 ? [mod, ro, rm] : // All 3 args provided
+				IsNum(mod)            ? mod :           // The ModRM byte itself is provided (used in Instr class when extracting instructions)
+				                        0 ;             // Empty modrm
+
+			[this.Mode, this.RegO, this.RegM, this.Data] = ParseData(data, false);
+		}
+
+		///
+		/// \brief Method to check whether current 'ModRM' needs an SIB byte
+		///
+		needSIB()
+		{
+			if (IsNum(this.Mode) && this.Mode !== 3)
+			{
+				return (
+					(IsNum(this.RegM) && this.RegM === ESP.Index) ||
+					(IsReg(this.RegM) && this.RegM.Index === ESP.Index)
+				);
+			}
+
+			return false;
+		}
+
+		///
+		/// \brief Method to update the data based on the members. Use null for members which dont change
+		///        (used when modifying extracted instructions)
+		///
+		update(mod, ro, rm)
+		{
+			let parts = ParseData([
+				mod ?? this.Mode,
+				ro  ?? this.RegO,
+				rm  ?? this.RegM
+			], false);
+
+			[this.Mode, this.RegO, this.RegM, this.Data] = parts; //we can combine this with above line but this is cleaner
+		}
+
+		///
+		/// \brief Method to retrieve the M & O members as registers
+		///
+		getReg(section, bitsize = 32)
+		{
+			const val = (section === 'M' ? this.RegM : this.RegO);
+
+			if (IsReg(val))
+				return val;
+
+			const ph = PH_Regs[bitsize];
+			if (ph == undefined)
+				return null;
+
+			return (IsNum(val) && val >= 0 && val <= 7) ? ph.List[val] : ph;
+		}
+
+		///
+		/// \brief toString override
+		///
+		toString()
+		{
+			return `Data = ${this.Data} {Mode = ${this.Mode}, Reg/Oper = ${this.RegO}, Reg/Mem = ${this.RegM}}`;
+		}
+	};
+
+	IdentifyClass(ModRM, ["Mode", "RegO", "RegM", "Data"]);
+}

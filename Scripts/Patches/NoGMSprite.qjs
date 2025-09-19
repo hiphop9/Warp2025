@@ -1,0 +1,145 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2023 Shinryo                                           *
+*   Copyright (C) 2024 Neo-Mind                                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo, Neo-Mind                                      *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the confitional jump to JMP after accountID comparison against GM ID inside CPc::SetSprNameList and CPc::SetActNameList functions
+///
+NoGMSprite = function(_)
+{
+	let funcs;
+	if (ROC.FullVer == 14.29)
+	{
+		$$(_, 1.1, `Find the reference pattern`)
+		let code =
+			SUB(EAX, 0xC)    //sub eax, 0Ch
+		+	JZ(WCp)          //jz shorT _skip
+		+	SUB(EAX, 0xFA1)  //sub eax, FA1h
+		+	JZ(WCp)          //jz shorT _skip
+		+	SUB(EAX, 0x16)   //sub eax, 16h
+		+	JZ(WCp)          //jz shorT _skip
+		+	JMP(WCp)         //jmp short _continue
+		+	SUB(EAX, 0xFE1)  //sub eax, FE1h
+		+	JZ(WCp)          //jz short _skip
+		+	SUB(EAX, 0x24)   //sub eax, 24h
+		+	JZ(WCp)          //jz short _skip
+		+	SUB(EAX, 0x99)   //sub eax, 99h
+		;
+		let addr = Exe.FindHex(code);
+		if (addr < 0)
+			throw Error("First pattern missing for (VC14.29)");
+		
+		$$(_, 1.2, `Move addr to after the pattern`)
+		addr += code.byteCount() + 2;
+		
+		$$(_, 1.3, `Find the locations where both functions are called`)
+		code =
+		[
+			PUSH_EAX      //push eax     
+		+	PUSH(5)       //push 5       
+		+	CALL(NEG3WC)  //call CPc::SetActNameList / CPc::SetSprNameList
+		,
+			PUSH(-1)      //push -1
+		];
+		
+		let addrs = Exe.FindHexN(code, addr + 0x30, addr + 0xA0);
+		if (addrs.length < 2)
+		{
+			code[1] = LEA(R32, [R32, -1]); //lea regA, [regB-1]
+			addrs = addrs.concat(Exe.FindHexN(code, addr + 0x30, addr + 0xA0));
+		}
+		if (addrs.length < 2)
+		{
+			code[1] = CMP([EBP, NEG2WC], 0x10); //cmp dword pt [LOCAL.x], 10h
+			addrs = addrs.concat(Exe.FindHexN(code, addr + 0x30, addr + 0xA0));	
+		}
+		if (addrs.length !== 2)
+			throw Error("Unable to find the CALL patterns (VC14.29)");
+
+		$$(_, 1.4, `Extract the Function addresses (PHYSICAL)`)
+		funcs = addrs.map( memAddr => Exe.GetTgtAddr(memAddr + code[0].byteCount() - 4, PHYSICAL) );
+	}
+	else
+	{
+		$$(_, 2.1, `Find the location where both functions are called`)
+		const halfCode =
+			PUSH(POS3WC)    //push offset actName / sprName
+		+	PUSH(5)         //push 5 ; layer
+		+	MOV(ECX, R32)   //mov ecx, regA
+		+	CALL(NEG2WC)    //call CPc::SetActNameList / CPc::SetSprNameList
+		;
+		const code = halfCode + halfCode;
+		const addr = Exe.FindHex(code);
+
+		/* - Seems to be not of any use
+		if (addr < 0)
+		{
+			code = code.remove( MOV(ECX, R32) ); //Remove the first MOV ECX, regA . It might have been assigned earlier
+			addr = Exe.FindHex(code);
+		}
+		*/
+		
+		if (addr < 0)
+			throw Error("Function CALLs not found");
+	
+		$$(_, 2.2, `Extract the Function addresses (PHYSICAL)`)
+		const pos2 = code.byteCount() - 4;
+		const pos1 = pos2 - halfCode.byteCount();
+
+		funcs =
+		[
+			Exe.GetTgtAddr(addr + pos1, PHYSICAL), //CPc::SetActNameList PHYSICAL address
+			Exe.GetTgtAddr(addr + pos2, PHYSICAL)  //CPc::SetSprNameList PHYSICAL address
+		];		
+	}
+
+	$$(_, 3.1, `Prep code to look for IsNameYellow function call`)
+	const prefix =
+		CALL(ALLWC)     //call IsNameYellow ; Compares accountID against GM IDs
+	+	ADD(ESP, 4)     //add esp, 4
+	+	TEST(AL, AL)    //test al, al
+	;
+	const csize = prefix.byteCount();
+
+	const suffix = JZ(Exe.Version === 9 ? WCp : POS2WC);
+
+	funcs.forEach( (fnAddr, idx) =>
+	{
+		const __ = `${_} [${idx}]`;
+
+		$$(__, 3.2, `Find the CALL inside the Set*NameList functions`)
+		const addr = Exe.FindHex(prefix + suffix, fnAddr, fnAddr + 0x80);
+		if (addr < 0)
+			throw Error(`CALL not found for No. ${idx+1}`);
+
+		$$(__, 3.3, `Change conditional jump`)
+		Exe.SetJMP(addr + csize);
+	});
+
+	return true;
+};

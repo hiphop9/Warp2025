@@ -1,0 +1,56 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Shinryo                                           *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Modify Zoom to specific percentages (25%, 50%, 75%, Maximum)
+///
+IncrZoom = function(_) {
+    $$(_, 1.1, `Search for the default zoom pattern in the executable`)
+
+    // Pattern to be found: 480.0 in IEEE-754
+    const findPattern = "00 00 F0 43 00 00"; // Current FAR_DIST
+    let addr = Exe.FindHex(findPattern, Exe.GetSectBegin(DATA), Exe.FileSize);
+
+    if (addr < 0) {
+        throw Error("Pattern '00 00 F0 43 00 00' not found in the executable.");
+    }
+
+    $$(_, 1.2, `Select the zoom value to be applied`)
+
+    // IEEE-754 values in hexadecimal
+    const newZoom = this.Data.get(_); // Selected zoom value
+
+    if (!newZoom) {
+        throw Error("Zoom not specified or invalid value.");
+    }
+
+    $$(_, 1.3, `Replace the pattern with the new value`)
+    Exe.SetHex(addr, newZoom);
+
+    console.log(`Zoom changed to: ${newZoom}`);
+    return true;
+};
+
+///
+/// \brief Wrappers for individual patches
+///
+Zoom25Percent = IncrZoom;
+Zoom50Percent = IncrZoom;
+Zoom75Percent = IncrZoom;
+ZoomMax       = IncrZoom;
+
+///
+/// \brief Mapping of zoom values to the specified percentages
+///
+IncrZoom.Data = MakeMap(
+    'Zoom25Percent', "00 00 00 43 00 00",
+    'Zoom50Percent', "00 00 FF 43 00 00",
+    'Zoom75Percent', "00 00 4C 44 00 00",
+    'ZoomMax',       "00 00 99 44 00 00" 
+);

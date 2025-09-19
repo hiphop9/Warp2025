@@ -1,0 +1,104 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2023 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2023-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Fixup all the LangType comparison Jumps in Mailbox function
+///
+EnableMailAccess = function(_)
+{
+	$$(_, 1.1, `Ensure the LANGTYPE is loaded`)
+	LANGTYPE.load();
+
+	$$(_, 1.2, `Prepare codes for finding short jumps`)
+	const tc = " [.0.....1] [11000...]"; //Common match for test eax, eax AND cmp eax, regA
+
+	let code =
+		tc           //test OR cmp
+	+   JE(WCp)      //je short _next
+	+   CMP(EAX, 8)  //cmp eax, 8
+	+   JE(WCp)    	 //je short _next
+	+   CMP(EAX, 9)	 //cmp eax, 9
+	+   JE(WCp)    	 //je short _next
+	;
+	let nopCount = code.byteCount();
+
+	$$(_, 1.3, `Find all locations of 1st Langtype comparison (in the mailbox function)`)
+	let addrs = Exe.FindHexN(3, 3, code + MOV(ECX, [ESI, POS1WC])); //MOV ECX, dword ptr [ESI + const]
+	if (addrs.isEmpty())
+		throw Error("First 3 similar comparisons missing");
+
+	$$(_, 1.4, `Find the 2nd Langtype comparison`)
+	let addr = Exe.FindHex(code + MOV(EBX, 1)); //mov ebx, 1
+	if (addr < 0)
+		throw Error("Second comparison not found");
+
+	$$(_, 1.5, `NOP out the entire "code" (since nopCount is large internally we will get a JMP automatically)`); //semicolon needed here
+	for (const memAddr of [addr, ...addrs])
+		Exe.SetNOPs(memAddr, nopCount);
+
+	$$(_, 2.1, `Prepare codes for finding Long jumps`)
+	const prefix = MOV(EAX, [LANGTYPE]);    //MOV EAX, dword ptr [g_serviceType]
+
+	code =
+		tc           //test OR cmp
+	+   JE(POS2WC)   //je _next#2
+	+   CMP(EAX, 8)  //cmp eax, 8
+	+   JE(POS2WC)   //je _next#2
+	+   CMP(EAX, 9)  //cmp eax, 9
+	+   JE(POS2WC)   //je _next#2
+	;
+	nopCount = code.byteCount();
+
+	$$(_, 2.2, `Find all locations with this pattern - 3 or 4 would be there`)
+	addrs = Exe.FindHexN(3, 4, prefix + code);
+	if (addrs.isEmpty())
+		throw Error("Incorrect no of matches found");
+
+	if (addrs.length === 3)
+	{
+		$$(_, 2.3, `If only 3 locations were found then one got missed, so we will use different pattern to look for it`)
+		const addr = Exe.FindHex(code + PUSH(0x23)); //push 23h
+		if (addr < 0)
+			throw Error("Fourth comparison not found");
+
+		$$(_, 2.4, `Add it as well to the array`)
+		addrs.push(addr - 5); //the substraction is needed since we add 5 during SetNOPs later
+	}
+
+	$$(_, 2.5, `NOP out the "code"`)
+	for (const addr of addrs)
+		Exe.SetNOPs(addr + 5, nopCount);
+
+	return true;
+};
+
+///
+/// \brief Disable Patch for Clients that dont have this issue (Pre-2013) or don't use regular mailbox anymore (Post-Aug 2014)
+///
+EnableMailAccess.validate = () =>
+	Exe.BuildDate >= 20130320 && Exe.BuildDate <= 20140800;

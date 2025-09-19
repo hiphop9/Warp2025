@@ -1,0 +1,450 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2015-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2021-03-02                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+// TODO - VC14.16 has new interface. Need to find its corresponding scroll creation & limiting codes
+
+///
+/// \brief Modify the comparisons in cases for Hair Style and Color arrows in UIMakeCharWnd::SendMsg and also update the scrollbar length
+///
+IncrNewCharHairs = function(_)
+{
+	$$(_, 1.1, `Find the reference PUSH (before the arrow switch case)`)
+	const addrs = Exe.FindHexN(PUSH(0x2714)); //push 2714h
+	if (addrs.isEmpty())
+		throw Error("Reference PUSH missing");
+
+	$$(_, 1.2, `Prep the comparison pattern & related variables based on date & version`)
+	let parts, hcLimit, limits, clrLoc;
+	switch (Exe.Version)
+	{
+		case 6:
+		{
+			limits = [0x60, 0x220];
+			hcLimit = 8;
+
+			clrLoc = [EBX, POS2WC];
+			parts =
+			[
+				MOV(ECX, clrLoc)    //mov ecx, dword ptr [ebx + hcOffset]
+			+	INC(ECX)            //inc ecx
+			+	MOV(EAX, ECX)       //mov eax, ecx
+			+	MOV(clrLoc, ECX)    //mov dword ptr [ebx + hcOffset], ecx
+			,
+				CMP(EAX, hcLimit)   //cmp eax, dword ptr [ebx + hcOffset]
+			+	JLE(6)              //jle short _skip
+			,
+				MOV(clrLoc, EDI)    //mov dword ptr [ebx + hcOffset], edi
+			];
+			break;
+		}
+		case 9:
+		{
+			limits = [0x160, 0x1C0];
+			hcLimit = 8;
+
+			if (Exe.BuildDate <= 20111122)
+			{
+				clrLoc = [R32, POS2WC]; //reg32 can be EBX or EBP
+				parts =
+				[
+					INC(clrLoc)                                      //inc dword ptr [regB + hcOffset]
+				,
+					CMP(clrLoc, hcLimit)                             //cmp dword ptr [regB + hcOffset], hcLimit
+				+	JLE(Exe.BuildDate <= 20111102 ? 0xA : 6)         //jle short _skip
+				,
+					MOV(clrLoc, Exe.BuildDate <= 20111102 ? 0 : EDI) //mov dword ptr [regB + hcOffset], 0 / EDI
+				];
+				break;
+			}
+
+			if (Exe.BuildDate <= 20120222 || (!ROC.IsRenewal && Exe.BuildDate <= 20120320))
+			{
+				clrLoc = [EBP, POS2WC];
+				parts =
+				[
+					MOV(EBX, 1)           //mov ebx, 1
+				+	ADD(clrLoc, EBX)      //add dword ptr [ebp + hcOffset], ebx
+				,
+					CMP(clrLoc, hcLimit)  //cmp dword ptr [ebp + hcOffset], <hcLimit>
+				+	JLE(6)                //jle short _skip
+				,
+					MOV(clrLoc, EDI)      //mov dword ptr [ebp + hcOffset], edi
+				];
+				break;
+			}
+		}
+		case 10:
+		case 11:
+		{
+			limits = [0x300, 0x3C0];
+
+			clrLoc = [EBX, POS2WC];
+			if (Exe.BuildDate <= 20140205)
+			{
+				hcLimit = 7;
+				parts =
+				[
+					''
+				,
+					CMP(clrLoc, 0)        //cmp dword ptr [ebx + hcOffset], 0
+				+	JGE(0xA)              //jge short _skip#1
+				+	MOV(clrLoc, 0)        //mov dword ptr [ebx + hcOffset], 0
+				+	MOV(EAX, hcLimit)     //mov eax, hcLimit
+				+	CMP(clrLoc, EAX)      //cmp dword ptr [ebx + hcOffset], eax
+				+	JLE(6)                //jle short _skip#2
+				,
+					MOV(clrLoc, EAX)      //mov dword ptr [ebx + hcOffset], eax
+				];
+			}
+			else
+			{
+				hcLimit = 8;
+				parts =
+				[
+					MOV(clrLoc, R32)      //mov dword ptr [ebx + hcOffset], regA
+				,
+					TEST(EAX, EAX)        //test eax, eax
+				+	JNS(0xC)              //jns short _skip#1
+				+	MOV(clrLoc, 0)        //mov dword ptr [ebx + hcOffset], 0
+				+	JMP(0xF)              //jmp short _skip#2
+				+	CMP(EAX, hcLimit)     //cmp dword ptr [ebx + hcOffset], <hcLimit>
+				+	JLE(0xA)              //jle short _skip#3
+				,
+					MOV(clrLoc, hcLimit)  //mov dword ptr [ebx + hcOffset], <hcLimit>
+				];
+			}
+			break;
+		}
+
+		default: //For VC14.16, interface has changed need to research more.
+			break;
+	}
+
+	$$(_, 1.3, `Find the comparison for hair color using the pattern`)
+	const code = parts.join('');
+
+	let cmpAddr = addrs.findAs( memAddr =>
+	{
+		const found = Exe.FindHex(code, memAddr + limits[0], memAddr + limits[1]);
+		if (found > 0)
+			return found;
+	});
+	if (cmpAddr < 0)
+		throw Error("Hair Color comparison missing");
+
+	$$(_, 1.4, `Save the beginning & ending addresses as well as the memory location for hair color`)
+	const [, hcBegin, hcMid, hcEnd] = MapAddrs(cmpAddr, parts);
+
+	const ins = Instr.FromAddr(hcMid);
+	clrLoc[0] = ins.MRM.getReg('M');
+	clrLoc[1] = ins.Disp;
+
+	$$(_, 1.5, `Prepare the patterns for style comparison`)
+	let pat1, pat2, styleLoc;
+	switch (Exe.Version)
+	{
+		case 6:
+		{
+			styleLoc = [EBX, POS1WC];
+			pat1 =
+			[//0
+				DEC(WORD_PTR, styleLoc)        //dec word ptr [ebx + hsOffset]
+
+			,//1
+				CMP(styleLoc, DI)              //cmp word ptr [ebx + hsOffset], DI
+			+	JNE(9)                         //jne short _skip
+			+	MOV(WORD_PTR, styleLoc, 0x17)  //mov word ptr [ebx + hsOffset], 17h
+			];
+
+			styleLoc[1] = Filler(1);
+
+			pat2 =
+			[//0
+				INC(WORD_PTR, styleLoc)        //inc word ptr [ebx + hsOffset]
+
+			,//1
+				MOV(AX, styleLoc)              //mov ax, word ptr [ebx + hsOffset]
+			+	CMP(AX, 0x18)                  //cmp ax, 18h
+			+	JNE(9)                         //jne short _skip#2
+			+	MOV(WORD_PTR, styleLoc, 1)     //mov word ptr [ebx + hsOffset], 1
+			];
+			break;
+		}
+		case 9:
+		{
+			if (Exe.BuildDate <= 20120222 || (!ROC.IsRenewal && Exe.BuildDate <= 20120320))
+			{
+				styleLoc = [Exe.BuildDate <= 20110900 ? EBX : EBP, POS1WC];
+				pat1 =
+				[//0
+					Exe.BuildDate <= 20111102
+				?
+					DEC(WORD_PTR, styleLoc)    //dec word ptr [regB + hsOffset]
+				:                              //   OR
+					ADD(styleLoc, SI)          //add word ptr [regB + hsOffset], si
+
+				,//1
+					MOVZX(EAX, styleLoc)       //movzx eax, word ptr [regB + hsOffset]
+				+	XOR(ECX, ECX)              //xor ecx, ecx
+				+	CMP(CX, AX)                //cmp cx, ax
+				+	JNE(0xC)                   //jne short _skip
+				+	MOV(EDX, 0x17)             //mov edx, 17h
+				+	MOV(styleLoc, DX)          //mov word ptr [regB + hsOffset], dx
+				];
+
+				styleLoc[1] = Filler(1);
+				pat2 =
+				[//0
+					INC(WORD_PTR, styleLoc)    //inc word ptr [regB + hsOffset]
+
+				,//1
+					MOVZX(EAX, styleLoc)       //movzx eax, word ptr [regB + hsOffset]
+				+	MOV(ECX, 0x18)             //mov ecx, 18h
+				+	CMP(CX, AX)                //cmp cx, ax
+				+	JNE(0xC)                   //jne short _skip#2
+				+	MOV(EDX, 1)                //mov edx, 1
+				+	MOV(styleLoc, DX)          //mov word ptr [regB + hsOffset], dx
+				];
+				break;
+			}
+		}
+		case 10:
+		case 11:
+		{
+			styleLoc = [EBX, POS2WC];
+			if (Exe.BuildDate <= 20140205)
+			{
+				pat1 =
+				[//0
+					Exe.Version > 9
+				?
+					MOV(styleLoc, EDX)         //mov dword ptr [ebx + hsOffset], edx
+				+	TEST(EDX, EDX)             //test edx, edx
+				:
+					''
+
+				,//1
+					(Exe.Version === 9
+				?
+					CMP(styleLoc, 0)           //cmp dword ptr [ebx + hsOffset], 0
+				:
+					''
+				)
+				+	JGE(0xA)                   //jge short _skip#1
+				+	MOV(styleLoc, 0)           //mov dword ptr [ebx + hsOffset], 0
+				+	MOV(EAX, 0x16)             //mov eax, 16h
+				+	CMP(styleLoc, EAX)         //cmp dword ptr [ebx + hsOffset], eax
+				+	JLE(6)                     //jle short _skip#2
+				+	MOV(styleLoc, EAX)         //mov dword ptr [ebx + hsOffset], eax
+				];
+			}
+			else
+			{
+				pat1 =
+				[//0
+					MOV(styleLoc, R32)         //mov dword ptr [ebx + hsOffset], regA
+
+				,//1
+					TEST(EAX, EAX)             //test eax, eax
+				+	JNS(0xC)                   //jns short _skip#1
+				+	MOV(styleLoc, 0)           //mov dword ptr [ebx + hsOffset], 0
+				+	JMP(0xF)                   //jmp short _skip#2
+				+	CMP(EAX, 0x16)             //cmp eax, 16h
+				+	JLE(0xA)                   //jle short _skip#3
+				+	MOV(styleLoc, 0x16)        //mov dword ptr [ebx + hsOffset], 16h
+				];
+			}
+			break;
+		}
+		default: //VC14.16 uses new interface
+			break;
+	}
+
+	$$(_, 1.6, `Use the pattern to find the style comparison`)
+	cmpAddr = Exe.FindHex(pat1, hcBegin - 0x300, hcBegin);
+	if (cmpAddr < 0)
+		cmpAddr = Exe.FindHex(pat1, hcEnd, hcEnd + 0x200);
+
+	if (cmpAddr < 0)
+		throw Error("Hair Style comparison missing");
+
+	$$(_, 1.7, `Save the begin & end addresses and the memory location for hair style`)
+	styleLoc[1] = Instr.FromAddr(cmpAddr).Disp;
+
+	const [, hsBegin, hsEnd] = MapAddrs(cmpAddr, pat1);
+	let hsAddon = 1;
+
+	$$(_, 1.8, `Look for an additional comparison for older clients (Left and Right arrows have seperate cases)`)
+	let hsBegin2, hsEnd2;
+	if (pat2 ?? false)
+	{
+		hsAddon = 0;
+
+		pat2[0] = SwapFillers( pat2[0], {1: styleLoc[1]} );
+		pat2[1] = SwapFillers( pat2[1], {1: styleLoc[1]} );
+
+		cmpAddr = Exe.FindHex(pat2, hsEnd + 0x50, hsEnd + 0x400);
+		if (cmpAddr < 0)
+			throw Error("2nd Style comparison missing");
+
+		$$(_, 1.9, `Save the addresses`) ;//semicolon needed here apparently
+		[, hsBegin2, hsEnd2] = MapAddrs(cmpAddr, pat2);
+	}
+
+	$$(_, 2.1, `Get the new limits from user`)
+	const result = Exe.GetUserInput('$newHairLimits', D_VecU16, "New Char Limits", "Enter the new hair limits for character creation UI", [hcLimit, 0x16], {
+		max: 1000,
+		name0: "Hair Color Limit",
+		name1: "Hair Style Limit",
+	});
+
+	if (result === false)
+		Cancel("Limits", hcLimit + " & 22");
+
+	const [hcNewLimit, hsNewLimit] = result;
+
+	if (hcNewLimit !== hcLimit)
+	{
+		$$(_, 2.2, `Prep & Insert the new Hair Color comparison`)
+		const freeVir = this.addCmp(clrLoc, 0, hcNewLimit, 4);
+
+		$$(_, 2.3, `Put a JMP at Original Hair Color comparison & a CALL before the End of comparison`)
+		this.jmpCall(hcBegin, hcEnd, freeVir);
+
+		$$(_, 2.4, `Fix the scrollbar for Hair Color`)
+		if (!hsBegin2)
+			this.fixSB('color', hcLimit, hcNewLimit);
+	}
+
+	if (hsNewLimit !== 0x16)
+	{
+		$$(_, 2.5, `Prep & Insert the new Hair Style comparison`)
+		const freeVir = this.addCmp(styleLoc, hsAddon, hsNewLimit + hsAddon, (pat2 ?? false) ? 2 : 4);
+
+		$$(_, 2.6, `Put a JMP at Original Hair Style comparison & a CALL before the End of comparison`)
+		this.jmpCall(hsBegin, hsEnd, freeVir);
+		if (hsBegin2)
+		{
+			this.jmpCall(hsBegin2, hsEnd2, freeVir);
+		}
+		else
+		{
+			$$(_, 2.7, `Fix the scrollbar for Hair Style`)
+			this.fixSB('style', 22, hsNewLimit);
+		}
+	}
+
+	return true;
+};
+
+///
+/// \brief Helper function to add the comparison code & return the allocated VIRTUAL address.
+///
+IncrNewCharHairs.addCmp = function(loc, min, newLimit, opsize)
+{
+	const _ = 'IncrNewCharHairs.addCmp';
+
+	$$(_, 1, `Construct the code using the limit values`)
+	const ptr = (opsize === 2 ? WORD_PTR : DWORD_PTR);
+
+	const code =
+		CMP(ptr, loc, min)      //cmp (d)word ptr [reg + <offset>], 0 / 1
+	+	JGE(0xA)                //jge short _skip#1
+	+	MOV(ptr, loc, min)      //mov (d)word ptr [reg + offset>], 0 / 1
+	+	NOP                     //nop ; helps to accomodate both type of ptr
+
+	+	CMP(ptr, loc, newLimit) //cmp (d)word ptr [reg + <offset>], <newLimit> ; _skip#1
+	+	JLE(0xA)                //jle short _skip#2
+	+	MOV(ptr, loc, newLimit) //mov (d)word ptr [reg + <offset>], <newLimit>
+	+	NOP                     //nop ; helps to accomodate both type of ptr
+
+	+	RETN()                  //retn ; _skip#2
+	;
+
+	$$(_, 2, `Add the code and return it's VIRTUAL address`)
+	const [, freeVir] = Exe.AddHex(code, 0x10);
+
+	return freeVir;
+};
+
+///
+/// \brief Helper function to create the Short JMP & CALL to our code.
+///
+IncrNewCharHairs.jmpCall = function(begin, end, funcVir)
+{
+	Exe.SetCALL(begin, funcVir);
+	Exe.SetJMP(begin + 5, end, PHYSICAL);
+};
+
+///
+/// \brief Helper function to update the scrollbar
+///
+IncrNewCharHairs.fixSB = function(type, oldLimit, newLimit)
+{
+	const _ = 'IncrNewCharHairs.fixSB';
+
+	$$(_, 1.1, `Find the scrollbar creation`)
+	let code =
+		PUSH(oldLimit + 1)  //push oldLimit+1
+	+	PUSH_1              //push 1
+	+	PUSH(oldLimit)      //push oldLimit
+	+	CALL()              //call <UIScrollBar::Create?>
+	;
+	const addrs = Exe.FindHexN(code);
+	if (addrs.isEmpty())
+		throw Error("Scrollbar codes missing for " + type);
+
+	$$(_, 1.2, `Extract the function address`)
+	const csize = code.byteCount();
+	const SB_Create = Exe.GetTgtAddr(addrs[0] + csize);
+
+	$$(_, 2.1, `Construct the code to call the function with the updated limits`)
+	code =
+		PUSH(newLimit + 1)  //push newLimit+1
+	+	PUSH_1              //push 1
+	+	PUSH(newLimit)      //push newLimit
+	+	CALL(Filler(1))     //call <UIScrollBar::Create?>
+	+	RETN()              //retn
+	;
+
+	$$(_, 2.2, `Add our code`)
+	const [, freeVir] = AutoHook(null, code, { targets : { 1 : SB_Create } });
+
+	$$(_, 2.3, `Create a NOP sequence & change the CALL target to our code`)
+	for (const addr of addrs)
+	{
+		Exe.SetNOPs(addr, csize - 1);
+		Exe.SetTgtAddr(addr + csize, freeVir);
+	}
+};
+
+///
+/// \brief Disable for unsupported clients (VC14.16)
+///
+IncrNewCharHairs.validate = () =>
+	Exe.Version < 14;

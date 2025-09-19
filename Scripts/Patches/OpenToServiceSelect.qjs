@@ -1,0 +1,63 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 CH.C (jchcc)                                   *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : CH.C (jchcc)                                           *
+*   Created Date  : 2021-06-10                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Find the indirect table for switch statement inside UILoginWnd::SendMsg,
+///        Make Opening button work as return Service Selection
+///
+OpenToServiceSelect = function(_)
+{
+	$$(_, 1.1, `Find the MsgString ID reference of "Please enter at least %d characters. If you don't have account,"`)
+	let addr = Exe.FindHex(PUSH(0xBD5) + CALL()); //PUSH 0BD5 followed by CALL
+	if (addr < 0)
+		throw Error("MsgString ID Missing");
+
+	$$(_, 1.2, `Find the switch table inside UILoginWnd::SendMsg before it`)
+	const code =
+		MOVZX(EAX, BYTE_PTR, [EAX, POS4WC])  //movzx eax, byte ptr [eax + idxTbl]
+	+	JMP([4, EAX, POS4WC])                //jmp dword ptr [eax*4 + jmpTbl]
+	;
+
+	addr = Exe.FindHex(code, addr - 0x300, addr);
+	if (addr < 0)
+		throw Error("Switch table missing");
+
+	$$(_, 2.1, `Extract the idxTbl`)
+	const idxTbl = Exe.GetInt32(addr + 3);
+
+	$$(_, 2.2, `Change the index for the 100th entry to 0`)
+	Exe.SetInt8(Exe.Vir2Phy(idxTbl + 100, CODE), 0);
+
+	return true;
+};
+
+///
+/// \brief Disable for Old Clients - Only Clients with new login window need it
+///
+OpenToServiceSelect.validate = () =>
+	!ROC.HasLWhidden && Exe.Version > 10;

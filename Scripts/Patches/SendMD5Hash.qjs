@@ -1,0 +1,84 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 GreenBox                                          *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : GreenBox, Neo-Mind                                     *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change all Conditional jumps to JMP related to Langtype comparisons
+///        inside CLoginMode::CheckExeHashFromAccServer function
+///
+SendMD5Hash = function(_)
+{
+	$$(_, 1.1, `Ensure the LANGTYPE is loaded`)
+	LANGTYPE.load();
+
+	$$(_, 1.2, `Prep comparison patterns to look for`)
+	const patterns =
+	[
+			(ROC.FullVer == 14.29
+		?
+			MOV(EAX, [LANGTYPE])
+		:
+			MOV(R32, [LANGTYPE]) //mov regA, dword ptr [g_serviceType]
+		+   XOR(EAX, EAX)        //xor eax, eax
+		)
+		+   CMP(R32, 6)          //cmp regA, 6
+		+   JE(WCp)              //JE SHORT _set1 -> (addr has 'mov eax, 1')
+		,
+			TEST(EAX, EAX)       //test eax, eax ; eax has [g_serviceType]
+		+   JNE(WCp)             //jne short _set1
+		+   MOV(EAX, [POS4WC])   //mov eax, dword ptr [addr#2]
+		,
+			CMP(EAX, 6)          //cmp eax, 6  ; EAX has [g_serviceType]
+		+   JNE(WCp)             //jne short _skip
+	];
+	const delta = [2, 7, 2];
+
+	$$(_, 2.1, `Set the starting addr as the beginning of CODE section`)
+	let addr = Exe.GetSectBegin(CODE);
+
+	patterns.forEach( (pat, idx) =>
+	{
+		const __ = `${_} [${idx}]`;
+
+		$$(__, 2.2, `Find the Langtype comparison`)
+		addr = Exe.FindHex(pat, addr);
+		if (addr < 0)
+			throw Error(`Comparison no. ${idx+1} not found`);
+
+		$$(__, 2.3, `Set addr to location after conditional jump`)
+		addr += pat.byteCount() - delta[idx];
+
+		$$(__, 2.4, `Change the conditional jump`)
+		Exe.SetJMP(addr);
+
+		$$(__, 2.5, `Set addr to jumped location so that we can skip over unnecessary bytes in next FindHex call`)
+		addr = Exe.GetTgtAddr(addr + 1, PHYSICAL, 1);
+	});
+
+	return true;
+};

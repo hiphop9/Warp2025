@@ -1,0 +1,113 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2023-2024 Jittapan Pluemsumran (Secret)                  *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Jittapan (Secret)                                      *
+*   Created Date  : 2023-02-09                                             *
+*   Last Modified : 2024-09-03                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Makes the Trait Status button in the status window do nothing
+///
+DisableTraitStatusButton = function()
+{
+    const _ = 'DisableTraitStatusButton : ';
+
+    $$(_ + '1.1 Find the UUID comparison')
+    const prefix =
+        CMP(EAX, ROC.FullVer == 14.29 ? (Exe.BuildDate > 20240000 ? 0x222 : 0x221) : 0x21E) //cmp eax, 222h/221h/21Eh
+    ;
+    const suffix =
+		JG(POS3WC) //jg _skip#1
+    +   JZ(POS3WC) //jz _skip#2
+    ;
+
+    let addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0)
+		throw Error('UIID comparison not found.');
+
+	addr += prefix.byteCount();
+	
+    $$(_ + '1.2 - NOP the jumps out')
+    Exe.SetNOPs(addr, suffix.byteCount()); // 6 for each jumps (12)
+
+    return true;
+}
+
+///
+/// \brief Disable for unsupported clients.
+///
+DisableTraitStatusButton.validate = function()
+{
+	return Exe.BuildDate >= 20200916; // Roughly this date, still needs confirmation
+};
+
+///
+/// \brief Hides the Trait Status button from the status window
+///
+HideTraitStatusButton = function()
+{
+    const _ = 'HideTraitStatusButton : ';
+
+    $$(_ + '1.1 - Find the UIWindow::AddChild call')
+	const suffix =
+       CALL(ALLWC)
+    ;
+	let prefix;
+	if (ROC.FullVer == 14.29)
+	{
+		prefix =
+			PUSH(Exe.BuildDate > 20240000 ? 0x222 : 0x221)  //push 221h/222h
+		+	MOV(R32, [R32])     //mov regA, dword ptr [regB]
+		+	CALL([R32, POS2WC]) //call dword ptr [regA + dispA]
+		+	PUSH([R32, POS2WC]) //push dword ptr [regC + dispC]
+		+	MOV(ECX, R32)       //mov ecx, regD
+		;
+	}
+	else
+	{
+		prefix =
+			MOV([EAX, WC], 0x21E)
+		+   PUSH([ESI, POS2WC])
+		;
+	}
+	
+    let addr = Exe.FindHex(prefix + suffix);
+    if (addr < 0)
+        throw Error('UIWindow::AddChild call not found');
+    
+	addr += prefix.byteCount();
+	
+    $$(_ + '1.2 - NOP the call')
+    Exe.SetHex(addr, ADD(ESP, 4) + NOP2); // 5 for the call
+
+    return true;
+};
+
+///
+/// \brief Disable for unsupported clients.
+///
+HideTraitStatusButton.validate = function()
+{
+	return Exe.BuildDate >= 20200916; // Roughly this date, still needs confirmation
+};

@@ -1,0 +1,125 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2024 Shinryo                                           *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo                                                *
+*   Created Date  : 2020-11-10                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the conditional jump to JMP after Langtype comparison
+///        in InitMsgStrings function
+///
+MsgStrings = function(_)
+{
+	$$(_, 1.1, `Ensure the LANGTYPE is loaded`)
+	LANGTYPE.load();
+
+	$$(_, 1.2, `Find the comparison which is at the start of the function`)
+	let prefix, suffix;
+	if (Exe.Version === 6) //VC6
+	{
+		prefix =
+			MOV(EAX, [LANGTYPE])   //mov eax, dword ptr [g_serviceType]
+		+	PUSH(ESI)              //push esi
+		+	TEST(EAX, EAX)         //test eax, eax
+		;
+		suffix =
+			JNZ(WCp)               //jnz short _proceed -> continue with msgStringTable.txt loading
+		;
+	}
+	else if (Exe.BuildDate < 20170000)
+	{
+		prefix =
+			CMP([LANGTYPE], 0) //cmp dword ptr [g_serviceType], 0
+		+	PUSH(ESI)          //push esi
+		;
+		suffix =
+			JNZ(WCp)           //jnz short _proceed -> continue with msgStringTable.txt loading
+		;
+	}
+	else
+	{
+		prefix =
+			CMP([LANGTYPE], 0) //cmp dword ptr [g_serviceType], 0
+		;
+		suffix =
+			JNZ(WCp)           //jnz short _proceed -> continue with msgStringTable.txt loading
+		+	PUSH(ESI)          //push esi
+		;
+	}
+
+	const addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0)
+		throw Error("Langtype comparison not found");
+
+	$$(_, 2, `Change the conditional jump`)
+	Exe.SetJMP(addr + prefix.byteCount());
+
+	return true;
+};
+
+MsgStrings.validate = () =>
+	Exe.FindText("msgStringTable.txt") > 0;
+
+
+///
+/// \brief NOP out the conditional jump after Langtype Comparison
+///        in ITEM_INFO::InitItemInfoTables function
+///
+QuestDisplay = function(_)
+{
+	$$(_, 1, `Find where 'questID2display.txt' is PUSHed`)
+	const prefix = JNE(Exe.Version < 10 ? POS3WC : WCp);
+	const suffix =
+		PUSH_0                //push 0
+	+	(Exe.Version === 6
+	?
+		LEA(R32, [R32, WC])   //lea regA, [regB + disp8A] ; for VC6
+	:
+		''
+	)
+	+	PUSH(this.TxtAddr)    //push offset "questID2display.txt"
+	;
+
+	const addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0)
+		throw Error("'questID2display.txt' not used");
+
+	$$(_, 2, `NOP out the JNE`)
+	Exe.SetNOPs(addr, prefix.byteCount());
+
+	return true;
+};
+
+///
+/// \brief Disable for clients without the text string
+///
+QuestDisplay.validate = function()
+{
+	if (ROC.IsZero)
+		return false;
+
+	this.TxtAddr = Exe.FindText("questID2display.txt");
+	return (this.TxtAddr > 0);
+};

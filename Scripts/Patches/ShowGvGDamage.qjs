@@ -1,0 +1,80 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2021-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2018-2024 X-EcutiOnner (xex.ecutionner@gmail.com)        *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei, X-EcutiOnner                                   *
+*   Created Date  : 2021-06-01                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief NOPs out the JZ following TEST EAX, EAX after Comparison
+///        to Show Damage on GvG Maps during the Guild War.
+///
+ShowGvGDamage = function(_)
+{
+	$$(_, 1, `Load the SSN`)
+	SSN.load();
+
+    $$(_, 2, `Find the code responsible for checking GvG mapflag before showing Damage values`)
+	const mct =
+		MOV(ECX, SSN)
+	+	CALL(ALLWC)
+	+	TEST(EAX, EAX)
+	;
+	const code =
+		mct         //  0 mov ecx, <g_session>
+	                //  5 call CSession_IsSiegeMode
+	                // 10 test eax, eax
+	+	JNZ(0xE)    // 12 jnz short _skip
+	+	mct         // 14 mov ecx, <g_session>
+	                // 19 call CSession_IsBattleFieldMode
+	                // 24 test eax, eax
+	+	JZ(0x14)    // 26 jz short _next#1
+	+	PUSH(7)     // 28 push 7 ; _skip
+	+	mct         // 30 mov ecx, <g_session>
+	                // 35 call CSession_IsMasterAid
+	                // 40 test eax, eax
+	+	JZ(POS2WC)  // 42 jz _next#2
+	;
+	const addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Pattern missing");
+
+	$$(_, 3, `NOP it all out`)
+	Exe.SetNOPs(addr, code.byteCount());
+
+    /* Keeping it around for reference later
+	const nopsStart = 0;
+    const nopsEnd = 48;
+    const IsSiegeModeOffset = 6;
+    const IsBattleFieldModeOffset = 20;
+    const isMasterAid = 36;
+
+    logRawFunc("CSession_IsSiegeMode", offset, IsSiegeModeOffset);
+    logRawFunc("CSession_IsBattleFieldMode", offset, IsBattleFieldModeOffset);
+    logRawFunc("CSession_IsMasterAid", offset, isMasterAid);
+	*/
+
+    return true;
+};

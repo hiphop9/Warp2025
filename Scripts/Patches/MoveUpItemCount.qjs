@@ -1,0 +1,142 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2015-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-12                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the "boldtext" comparison JE to JMP inside
+///        UIFrameWnd::DrawItemWithCount function
+///
+MoveUpItemCount = function(_)
+{
+    $$(_, 1, `Find the pattern after the comparison inside DrawItemWithCount function`)
+	let code;
+	switch (Exe.Version)
+	{
+		case 6: //VC6
+		{
+			code =
+				PUSH(0xFFFFFF)   //push 0FFFFFFh
+			+	MOVSX(ECX, SI)   //movsx ecx, si
+			;
+			break;
+		}
+
+		case 9:  //VC9 &
+		case 10: //VC10
+		{
+			code =
+				PUSH(0xFFFFFF)   //push 0FFFFFFh
+			+	PUSH(0x0B)       //push 0Bh
+			+	PUSH_0           //push 0
+			+	MOVSX(R32, R16)  //movsx regA, reg16B
+			;
+			break;
+		}
+		case 11: //VC11
+		{
+			code =
+				PUSH(0xFFFFFF)   //push 0FFFFFFh
+			+	MOV(EAX, 0xE)    //mov eax, 0Eh
+			+	CMOVGE(EAX, ECX) //cmovge eax, ecx
+			+	PUSH(0x0B)       //push 0Bh
+			+	CWDE             //cwde
+			;
+			break;
+		}
+
+		default: //VC14.16
+		{
+			code =
+				PUSH(0xFFFFFF)   //push 0FFFFFFh
+			+	XOR(EAX, EAX)	 //xor eax, eax
+			+	ADD(EDI, 0xF)	 //add edi, 0Fh
+			;
+			break;
+		}
+	}
+
+	const addrs = Exe.FindHexN(code);
+	if (addrs.isEmpty())
+        throw Error("No Patterns found");
+
+    $$(_, 2.1, `Prep the code for finding the comparison`)
+    switch (Exe.Version)
+    {
+        case 6: //VC6
+        {
+            code =
+				MOV(AL, [EBP, 0x18])           //mov al, byte ptr [ebp+18h] ; ARG.5
+            +	ADD(ESP, 0xC)                  //add esp, 0Ch
+            +	TEST(AL, AL)                   //test al, al
+            ;
+            break;
+        }
+
+        case 9: //VC9
+        {
+            code =
+                CMP(BYTE_PTR, [ESP, 0x3C], 0)  //cmp byte ptr [esp+3Ch], 0
+            ;
+            break;
+        }
+        case 10: //VC10
+        {
+            code =
+                CMP(BYTE_PTR, [EBP, 0x18], 0)  //cmp byte ptr [ebp+18h], 0 ; ARG.5
+            ;
+            break;
+        }
+
+        default: //VC11+
+        {
+            code =
+                CMP(BYTE_PTR, [EBP, 0x18], 0)  //cmp byte ptr [ebp+18h], 0 ; ARG.5
+            +	PUSH_0                         //push 0
+            ;
+			if (Exe.BuildDate > 20190910)
+				code += PUSH_0;				   //push 0
+
+            break;
+        }
+    }
+	code += JE(WCp);                          //je short _next ; Common suffix
+
+    $$(_, 2.2, `Find the comparison within 50h bytes before one of the patterns`)
+    const cmpAddr = addrs.findAs( addr =>
+    {
+        const found = Exe.FindHex(code, addr - 0x50, addr);
+        if (found > 0)
+			return found;
+    });
+	if (cmpAddr < 0)
+        throw Error("Comparison not found");
+
+    $$(_, 2.3, `Change the conditional jump (JE)`)
+    Exe.SetJMP(cmpAddr + code.byteCount() - 2);
+
+    return true;
+};

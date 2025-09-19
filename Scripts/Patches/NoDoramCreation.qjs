@@ -1,0 +1,104 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2015-2024 Ai4rei/AN                                      *
+*   Copyright (C) 2015-2024 Secret                                         *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Ai4rei/AN, Secret                                      *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-12                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Remove Doram race from character creation UI.
+///        Special thanks to @Ai4Rei for the original hex sequences.
+///
+NoDoramCreation = function(_)
+{
+	$$(_, 1.1, `Find the first pattern`)
+	let code =
+		PUSH([EDI, WCp]) //push dword ptr [edi + disp8A]
+	+	MOV(ECX, EDI)	 //mov ecx, edi
+	+	PUSH([EDI, WCp]) //push dword ptr [edi + disp8B]
+	+	CALL()           //call func#1
+	;
+	let addr = Exe.FindHex(code);
+
+	if (addr < 0)
+		throw Error("First Pattern missing");
+
+	$$(_, 1.2, `Swap the first PUSH with push 0`)
+	Exe.SetHex(addr, NOP + PUSH_0);
+
+	$$(_, 2.1, `Find the second pattern (with the MOV)`)
+	code =
+		MOV([EBP, NEG1WC], 0) //mov dword ptr [LOCAL.z], 0
+	+	MOV([EBP, NEG1WC], 0) //mov dword ptr [LOCAL.y], 0
+	+	MOV([EBP, NEG1WC], 0) //mov dword ptr [LOCAL.x], 0
+	+	PUSH_1				  //push 1
+	;
+
+	addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("2nd pattern (3 MOV) missing");
+
+	$$(_, 2.2, `Point addr to position of PUSH 1`)
+	addr += code.byteCount() - 2;
+
+	$$(_, 2.3, `Find the XOR code to jump to`)
+	code =
+		XOR(ESI, ESI)			//xor esi, esi
+	+	LEA(EAX, [EDI, POS2WC]) //lea eax, [edi + dispA]
+	+	LEA(ECX, [ECX, 0])		//lea ecx, [ecx + 0]
+	;
+
+	const addr2 = Exe.FindHex(code, addr + 2, addr + 0x300);
+	if (addr2 < 0)
+		throw Error("XOR pattern missing");
+
+	$$(_, 2.4, `Set a JMP to addr2 from addr`)
+	Exe.SetJMP(addr, addr2, PHYSICAL);
+
+	$$(_, 3.1, `Find the 3rd pattern`)
+	code =
+		MOV(ECX, [EBP, -200]) 	//mov ecx, dword ptr [LOCAL.z]
+	+	INC(ECX)				//inc ecx
+	+	MOV([EBP, -200], ECX)	//mov dword ptr [LOCAL.z], ECX
+	+	MOV(EAX, POS2WC)		//mov eax, offset#1
+	+	CMP(ECX, 2)				//cmp eax, 2
+	;
+
+	addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("3rd pattern missing");
+
+	$$(_, 3.2, `NOP out the pattern after it (needs further investigation)`)
+	Exe.SetNOPs(addr + code.byteCount(), 6);
+
+	return true;
+};
+
+///
+/// \brief Disable for older & more recent clients
+///       (since they didnt have Doram race or can be disabled externally)
+///
+NoDoramCreation.validate = () =>
+	Exe.BuildDate > 20151000 && Exe.BuildDate <= 20170614;

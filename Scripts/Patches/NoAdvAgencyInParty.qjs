@@ -1,0 +1,133 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2021-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2021-2024 X-EcutiOnner (xex.ecutionner@gmail.com)        *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei, X-EcutiOnner                                   *
+*   Created Date  : 2021-06-14                                             *
+*   Last Modified : 2024-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief NOPs all offset after comparison (inside UIMessengerGroupWnd_virt68 function)
+///        to disable the creation of adventurer agency button on the party window.
+///
+NoAdvAgencyInParty = function(_)
+{
+	$$(_, 1, `Find the button prep inside the function`)
+	let code;
+	if (ROC.FullVer == 14.29)
+	{
+		const template =
+			MOV(ECX, [ESI]) //mov ecx, dword ptr [esi]
+		+	PUSH_0
+		+	PUSH('[0000000.]')     //push 0/1
+		+	PUSH(Filler(1))         //push offset <string>
+		+	CALL(ALLWC)             //call UIBitmapButton::SetBitmapName
+		;
+		
+		code =
+			MOV(BYTE_PTR, [ECX, POS2WC], 0)            //mov byte ptr [ecx + UIBitmapButton.button_flag], 0
+		+	CALL([EAX, POS2WC])                        //call dword ptr [eax + UIBitmapButton_vtable.UIWindow_SendMsg]
+		+	SwapFillers( template, {1: this.BmpAddr} ) //mov ecx, dword ptr [esi]
+													   //push 0
+													   //push offset aIBasicInterfac_1 ; "유저인터페이스\\basic_interface\\mesbtn_partymaster_01.bmp"
+													   //call UIBitmapButton::SetBitmapName
+		+	SwapFillers( template, {1: POS4WC} )       //mov ecx, dword ptr [esi]
+													   //push 1
+													   //push offset aPFBasic_interfaceMesbtn_partyma_0
+													   //call UIBitmapButton::SetBitmapName
+		+	MOV([EBP, NEG2WC], 0xDBA)                  //mov dword ptr [LOCAL.x], 0DBAh
+		+	MOV(R32, POS4WC)                           //mov regA, aPFBasic_interfaceMesbtn_partyma_1
+		+	MOV([EBP, NEG2WC], ESI)                    //mov dword ptr [LOCAL.y], esi
+		+	MOV(R32, 2)                                //mov regB, 2
+		+	MOV(ECX, [ESI])                            //mov ecx, dword ptr [esi]
+		+	MOV(BYTE_PTR, [EBP, NEG2WC], 0)            //mov byte ptr [LOCAL.z], 0
+		+	PUSH([EBP, NEG2WC])                        //push dword ptr [LOCAL.z]  ; Arg3
+		+	PUSH_R                                     //push regB                 ; Arg2
+		+	PUSH_R                                     //push regA                 ; Arg1
+		+	CALL(ALLWC)                                //call UIBitmapButton::SetBitmapName
+		+	MOV(ESI, [EBP, NEG2WC])                    //mov esi, dword ptr [LOCAL.y]
+		+	PUSH([EBP, NEG2WC])                        //push dword ptr [LOCAL.x]
+		+	MOV(ESI, [ESI])                            //mov esi, dword ptr [esi]
+		+	CALL(ALLWC)                                //call MsgStr
+		+	ADD(ESP, 4)                                //add esp, 4
+		+	MOV(ECX, ESI)                              //mov ecx, esi
+		+	PUSH_EAX                                   //push eax ; Arg1
+		+	CALL(ALLWC)                                //call UIBitmapButton::SetText
+		;
+	}
+	else {
+		const reg = Exe.BuildDate > 20220000 ? EBX : EDI;
+		const template =
+			MOV(ECX, [reg, POS2WC]) //mov ecx, dword ptr [edi/ebx + UIMessengerGroupWnd.m_mesbtn]
+		+	(Exe.BuildDate > 20211000
+		?	PUSH_0
+		:	''
+		)
+		+	PUSH(' [000000..]')     //push 0/1/2
+		+	PUSH(Filler(1))         //push offset <string>
+		+	CALL(ALLWC)             //call UIBitmapButton::SetBitmapName
+		;
+
+		code =
+			MOV(BYTE_PTR, [ECX, POS2WC], 0)            //mov byte ptr [ecx + UIBitmapButton.button_flag], 0
+		+	CALL([EAX, POS3WC])                        //call dword ptr [eax + UIBitmapButton_vtable.UIWindow_SendMsg]
+		+	SwapFillers( template, {1: this.BmpAddr} ) //mov ecx, dword ptr [edi/ebx + UIMessengerGroupWnd.m_mesbtn]
+													   //push 0
+													   //push offset aIBasicInterfac_1 ; "유저인터페이스\\basic_interface\\mesbtn_partymaster_01.bmp"
+													   //call UIBitmapButton::SetBitmapName
+		+	SwapFillers( template, {1: POS4WC} )       //mov ecx, dword ptr [edi/ebx + UIMessengerGroupWnd.m_mesbtn]
+													   //push 1
+													   //push offset aPFBasic_interfaceMesbtn_partyma_0
+													   //call UIBitmapButton::SetBitmapName
+		+	SwapFillers( template, {1: POS4WC} )       //mov ecx, dword ptr [edi/ebx + UIMessengerGroupWnd.m_mesbtn]
+													   //push 2
+													   //push offset aPFBasic_interfaceMesbtn_partyma_1
+													   //call UIBitmapButton::SetBitmapName
+		+	PUSH(0xDBA)                                //push 0DBAh
+		+	CALL(ALLWC)                                //call MsgStr
+		+	MOV(ECX, [reg, POS2WC])                    //mov ecx, dword ptr [edi/ebx + UIMessengerGroupWnd.m_mesbtn]
+		+	ADD(ESP, 4)                                //add esp, 4
+		+	PUSH_EAX                                   //push eax ; Arg1
+		+	CALL(ALLWC)                                //call UIBitmapButton::SetText
+		;
+	}
+	
+	const addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Function not found");
+	
+	$$(_, 2, `NOP out the creation`)
+	Exe.SetNOPs(addr, code.byteCount());
+
+	return true;
+};
+
+///
+/// \brief Disable for clients without the button (check for image path)
+///
+NoAdvAgencyInParty.validate = function()
+{
+	this.BmpAddr = Exe.FindText("\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\basic_interface\\mesbtn_partymaster_01.bmp"); //"유저인터페이스\\basic_interface\\mesbtn_partymaster_01.bmp"
+	return (this.BmpAddr > 0);
+};

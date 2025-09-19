@@ -1,0 +1,207 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2018-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144), Neo-Mind                                *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change value used in comparison of fade out delay for same map warps
+///
+CustomFadeDelay = function(_)
+{
+	$$(_, 1.1, `Search for fadeout for cycle in CMode::RunFadeOut`)
+	const reg = ROC.FullVer == 14.29 ? EDI : ESI;
+	const fcall = ROC.FullVer == 14.29
+	?
+		MOV(EAX, [R32])      //mov eax, dword ptr [regA]
+	+	CALL([EAX, WCp])     //call dword ptr [eax+constA]
+	:
+		CALL(ALLWC)          //call CRenderer::*Frame
+	;
+	
+	let prefix =
+		MOV(reg, [POS4WC])   //mov esi/edi, dword ptr [timeGetTime]
+	;
+	let suffix =
+		CALL(reg)            //call esi/edi ; timeGetTime
+	+	MOV(ECX, [POS4WC])   //mov ecx, dword ptr [g_renderer]
+	;
+	const grOffset = suffix.byteCount() - 4;
+	const fsOffset1 = grOffset + 5;
+
+	suffix +=
+		MOV([POS4WC], EAX)   //mov dword ptr [dwFadeStart], EAX
+	+	fcall                //call CRenderer::BackupFrame (direct or indirect)
+	+	CALL(reg)            //call esi/edi ; timeGetTime
+	+	SUB(EAX, [POS4WC])   //sub eax, dword ptr [dwFadeStart]
+	;
+	const fsOffset2 = suffix.byteCount() - 4;
+	let fdOffset1 = fsOffset2 + 5;
+
+	suffix +=
+		CMP(EAX, 0xFF)       //cmp eax, 0FFh
+	+	JNB(POS2WC)          //jnb _next
+	;
+
+	let patAddr1 = Exe.FindHex(prefix + suffix);
+	if (patAddr1 < 0)
+	{
+		prefix += ADD(ESP, WCp); //add esp, immA; usually 18
+		patAddr1 = Exe.FindHex(prefix + suffix);
+	}
+	if (patAddr1 < 0)
+		throw Error("pattern not found");
+
+	$$(_, 1.2, `Get the prefix byte count (need to add to all the offsets)`)
+	const psize = prefix.byteCount();
+
+	$$(_, 1.3, `Extract the FadeStart address`)
+	const FadeStart = Exe.GetUint32(patAddr1 + psize + fsOffset1);
+
+	$$(_, 1.4, `Ensure its not a false match`)
+	if (FadeStart !== Exe.GetUint32(patAddr1 + psize + fsOffset2))
+		throw Error("Pattern found but a false match");
+
+	$$(_, 1.5, `Extract the g_renderer address ( we can keep it as hex since we are not doing any comparisons )`)
+	const Renderer = Exe.GetHex(patAddr1 + psize + grOffset, 4);
+
+	$$(_, 1.6, `Add the psize to fdOffset1 (so that its a proper offset wrt patAddr1)`)
+	fdOffset1 += psize;
+
+	$$(_, 1.7, `Search below in same function for second delay usage`)
+	const code =
+		MOV(ECX, [Renderer])   //mov ecx, dword ptr [g_renderer]
+	+	fcall                  //call CRenderer::RestoreFrame (direct or indirect)
+	+	CALL(reg)              //call esi/edi ; timeGetTime
+	+	SUB(EAX, [FadeStart])  //sub eax, dword ptr [dwFadeStart]
+	+	CMP(EAX, 0xFF)         //cmp eax, 0FFh
+	+	JB(NEG2WC)             //jb _next#2
+	;
+	const fdOffset2 = code.byteCount() - 10; //6 for jb & 4 for the value itself
+
+	const patAddr2 = Exe.FindHex(code, patAddr1, patAddr1 + 0xD0);
+	if (patAddr2 < 0)
+		throw Error("2nd pattern not found");
+
+	$$(_, 1.8, `Search for the separate fadeout code in CMode_ProcessFadeIn`)
+	let patAddr3;
+	switch (Exe.Version)
+	{
+		case 6: //VC6
+		{
+			prefix =
+				CALL(EDI)                 //call edi
+			+	MOV(R32, [FadeStart])     //mov regA, dword ptr [dwFadeStart]
+			+	POP(EDI)                  //pop edi
+			+	SUB(EAX, R32)             //sub eax, regA
+			+	POP(ESI)                  //pop esi
+			+	CMP(EAX, 0xFF)            //cmp eax, 0FFh
+			;
+			suffix =
+				JNB(WCp)                  //jnb short addr
+			+	INC(EAX)                  //inc eax
+			+	NEG(EAX)                  //neg eax
+			+	SHL(EAX, 0x18)            //shl eax, 18h
+			+	PUSH_EAX                  //push eax
+			;
+			patAddr3 = Exe.FindHex(prefix + suffix);
+			break;
+		}
+
+		case 9:  //VC9  &
+		case 10: //VC10
+		{
+			prefix =
+				CALL(EDI)                 //call edi
+			+	SUB(EAX, [FadeStart])     //sub eax, dword ptr [dwFadeStart]
+			+	POP(EDI)                  //pop edi
+			+	POP(ESI)                  //pop esi
+			+	CMP(EAX, 0xFF)            //cmp eax, 0FFh
+			;
+			suffix =
+				JNB(WCp)                  //jnb short _next#3
+			+	MOV(R32, 0xFF)            //mov regA, 0FFh ; regA can be ECX or EDX
+			+	SUB(R32, EAX)             //sub rega, eax
+			+	MOV(EAX, [Renderer])      //mov eax, dword ptr [g_renderer]
+			+	MOV(R32, [EAX, WCp])      //mov regB, dword ptr [EAX + dispA]
+			+	SHL(R32, 0x18)            //shl regA, 18h
+			+	PUSH_R                    //push regA
+			;
+
+			patAddr3 = Exe.FindHex(prefix + suffix);
+			if (patAddr3 < 0 && Exe.Version === 10)
+			{
+				suffix = suffix.replace( MOV(R32, [EAX, WCp]),
+					MOV(R32, [EAX, WCp])  //mov regC, dword ptr [eax + dispC]
+				+	MOV(EAX, [EAX, WCp])  //mov eax, dword ptr [eax + dispD]
+				);
+
+				patAddr3 = Exe.FindHex(prefix + suffix);
+			}
+			break;
+		}
+
+		default: //VC11 & VC14.16
+		{
+			prefix =
+				CALL([POS4WC])            //call dword ptr [timeGetTime]
+			+	SUB(EAX, [FadeStart])     //sub eax, dword ptr [dwFadeStart]
+			+	POP(ESI)                  //pop esi
+			+	CMP(EAX, 0xFF)            //cmp eax, 0FFh
+			;
+
+			suffix =
+				JNB(WCp)                  //jnb short _next#4
+			+	MOV(R32, 0xFF)            //mov regA, 0FFh ; regA is usually ecx
+			+	SUB(R32, EAX)             //sub regA, eax
+			+	MOV(EAX, [Renderer])      //mov eax, dword ptr [g_renderer]
+			+	SHL(R32, 0x18)            //shl regA, 18h
+			+	PUSH_R                    //push regA
+			;
+			patAddr3 = Exe.FindHex(prefix + suffix);
+			break;
+		}
+	}
+
+	if (patAddr3 < 0)
+		throw Error("3rd pattern missing");
+
+	$$(_, 1.9, `Save the 3rd fade out delay offset`)
+	const fdOffset3 = prefix.byteCount() - 4;
+
+	$$(_, 2.1, `Get the new value from user`)
+	const varName = '$warpFadeOutDelay';
+	const delay = Exe.GetUserInput(varName, D_Uint32, "Delay value", "Enter new fadeout delay in ms", 255, {max: 512});
+	if (delay === false)
+		Cancel("Delay", 255);
+
+	$$(_, 2.2, `Replace all the instances where the delay was used for comparison`)
+	Exe.SetFromVar(patAddr1 + fdOffset1, varName); // first delay in fade out function
+	Exe.SetFromVar(patAddr2 + fdOffset2, varName); // second delay in fade out function
+	Exe.SetFromVar(patAddr3 + fdOffset3, varName); // last one in separate fade out code
+
+	return true;
+};

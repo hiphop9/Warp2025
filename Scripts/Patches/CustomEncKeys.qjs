@@ -1,0 +1,248 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2013 Shakto                                              *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shakto, Neo-Mind                                       *
+*   Created Date  : 2020-11-08                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Replaces the key PUSHed or Hijack the KeySetter function to
+///        use our code for assigning the keys. Choice is made based on PACKET.KS_Type
+///
+CustomEncKeys = function(_)
+{
+	$$(_, 1.1, `Ensure the 'Disable Packet Encryption' patch is unselected. Not applicable for test mode`)
+	if (!Warp.TestMode)
+		Warp.SetPatchState("NoPacketEncr", false);
+
+	$$(_, 1.2, `Discern the Variable name and index based on patchName`)
+	const index = this.Members.indexOf(_);
+	const varName = "$" + ["first", "second", "third"][index] + "key";
+
+	$$(_, 1.3, `Ensure the PACKET object has been loaded`)
+	PACKET.load();
+
+	$$(_, 1.4, `Get the new key from user`)
+	const oldKey = PACKET.Keys[index];
+	const newKey = Exe.GetUserInput(varName, D_Hex, "Packet Keys", "Enter the new packet key", oldKey, {byteCount: 4}); //big endian is default so no need to specify it.
+
+	if (newKey === false || newKey === oldKey)
+		Cancel("No new key specified");
+
+	if (PACKET.KS_Type === PACKET.Pusher) //Direct PUSHes
+	{
+		$$(_, 2.1, `For Direct Key PUSHes, find all locations where it occurs`)
+		const code =
+			PUSH(PACKET.Keys[2])  //push <key3>
+		+	PUSH(PACKET.Keys[1])  //push <key2>
+		+	PUSH(PACKET.Keys[0])  //push <key1>
+		+	CALL()                //call CRagConnection::InitKeys
+		;
+		const csize = code.byteCount();
+
+		$$(_, 2.2, `Update the respective PUSHed key with the new one in all such locations`)
+		for (const addr of Exe.FindHexN(code))
+			Exe.SetFromVar(addr + csize - 5*(index + 1), varName);
+
+		return true;
+	}
+	else if (PACKET.KS_Type === PACKET.Mover) //Since Packet Keys are moved individually inside ObfuscateOrInit, we can directly change those
+	{
+		$$(_, 2.3, `Find the correct key movement`)
+		let ins = Instr.FromAddr(PACKET.Assigner);
+		for (let i = 0; i < 3; i++, ins.moveToNext())
+		{
+			if (ins.Disp === 4*(index+1))
+			{
+				Exe.SetFromVar(ins.NextAddr - 4, varName);
+				break;
+			}
+		}
+		return true;
+	}
+	else //Keys are assigned inside ObfuscateOrInit mixed function
+	{
+		$$(_, 3.1, `Load the initial keys to CACHE if not done previously`)
+		const cacheKey = 'PACKET';
+		CACHE.load(cacheKey, this.Members, PACKET.Keys);
+
+		$$(_, 3.2, `Set the key for the patch`)
+		CACHE.setEntry(cacheKey, _, parseInt(newKey, 16));
+
+		$$(_, 3.3, `Run the helper function to make the changes in client`)
+		return this.obfuscate(_);
+	}
+};
+
+///
+/// \brief Disable for unsupported clients
+///
+CustomEncKeys.validate = HasPktKeys;
+
+///
+/// \brief Clear the key assignment & Re-stage the changes if necessary
+///
+CustomEncKeys.cleanup = function(patchName)
+{
+	const _ = `${patchName}.cleanup`;
+
+	$$(_, 1.1, `Proceed if KS_Type is neither a Pusher nor Mover`)
+	if (PACKET.KS_Type === PACKET.Pusher || PACKET.KS_Type === PACKET.Mover)
+		return;
+
+	$$(_, 1.2, `Revert the key to original`)
+	const cacheKey = 'PACKET';
+	CACHE.restoreEntry(cacheKey, patchName);
+
+	$$(_, 1.3, `Proceed only if we got a valid patch remaining`)
+	if (!CACHE.hasUsers(cacheKey))
+		return;
+
+	$$(_, 2.1, `Get the first remaining patch`)
+	const primary = CACHE.firstUser(cacheKey);
+
+	$$(_, 2.2, `Activate the patch`)
+	Exe.SetActivePatch(primary);
+
+	$$(_, 2.3, `Rerun the Obfuscation setup function`)
+	this.obfuscate(primary);
+};
+
+///
+/// \brief Helper function which modifies the ObfuscateOrInit function to use the new packet key specified
+///
+CustomEncKeys.obfuscate = function(patchName)
+{
+	const _ = `${patchName}.obfuscate`;
+
+	$$(_, 1.1, `Prepare suffix with Stack restore & RETN`)
+	const suffix =
+		(Exe.Version > 11
+	?
+		POP(EDI)      //pop edi
+	+	POP(ESI)      //pop esi
+	+	POP(EBX)      //pop ebx
+	:
+		''
+	)
+	+
+		(ROC.HasFP
+	?
+		FP_STOP       //mov esp, ebp
+	:	              //pop ebp
+		''
+	)
+	+	RETN(4)       //retn 4
+	;
+
+	$$(_, 1.2, `For virtualized function, add the encryption and zero assigning codes as well, since we need to replicate the entire function`)
+	let code = "";
+	if (PACKET.KS_Type === PACKET.Virtual)
+	{
+		const parts =
+		[//0
+			MOV(EAX, [ROC.StkReg, ROC.HasFP ? 8 : 4]) //mov eax, dword ptr [ARG.1] ;  ARG.1 = ebp+8 with FP & esp+4 without FP
+
+		,//1
+
+			TEST(EAX, EAX)        //test eax, eax
+		+	JNE(Filler(1,1))      //jne short _init
+		+	MOV(EAX, [ECX, 8])    //mov eax, dword ptr [ecx+8]
+		+	IMUL(EAX, [ECX, 4])   //imul eax, dword ptr [ecx+4]
+		+	ADD(EAX, [ECX, 0xC])  //add eax, dword ptr [ecx+0Ch]
+		+	MOV([ECX, 4], EAX)    //mov dword ptr [ecx+4], eax
+		+	SHR(EAX, 0x10)        //shr eax, 10h
+		+	AND(EAX, 0x7FFF)      //and eax, 7FFFh
+		+	suffix                //pop ebp / nop
+		                          //retn 4
+		,//2
+			CMP(EAX, 1)           //cmp eax, 1 <= _init
+		+	JE(Filler(2,1))       //je short _assign
+		+	XOR(EAX, EAX)         //xor eax, eax
+		+	MOV([ECX, 0x4], EAX)  //mov dword ptr [ecx+4], eax
+		+	MOV([ECX, 0x8], EAX)  //mov dword ptr [ecx+8], eax
+		+	MOV([ECX, 0xC], EAX)  //mov dword ptr [ecx+0Ch], eax
+		+	suffix                //pop ebp / nop
+		                          //retn 4
+		];
+
+		const [,,_init, _assign] = MapAddrs(0, parts);
+		code += SetFillTargets( parts, 1,
+		{
+			'1,1' : _init,
+			'2,1' : _assign
+		});
+	}
+
+	$$(_, 1.3, `Add the code for assigning the Initial packet keys`)
+	const cacheKey = 'PACKET';
+	const newKeys = this.Members.map(name => CACHE.entry(cacheKey, name));
+
+	code +=
+		MOV([ECX, 0x4], newKeys[0])  //mov dword ptr [ecx+4], <key1>  ; _assign
+	+	MOV([ECX, 0x8], newKeys[1])  //mov dword ptr [ecx+8], <key2>
+	+	MOV([ECX, 0xC], newKeys[2])  //mov dword ptr [ecx+0Ch], <key3>
+	+	XOR(EAX, EAX)                //xor eax, eax
+	+	suffix
+	;
+
+	$$(_, 2.1, `Enable the tag`)
+	Exe.BeginTag(CACHE.getTag(cacheKey));
+
+	$$(_, 2.2, `Allocate space for the code (if not already done)`)
+	const [free, freeVir] = CACHE.allocate(cacheKey, 'Obfuscate', code);
+
+	$$(_, 2.3, `Add the code at allocated space`)
+	Exe.SetHex(free, code);
+
+	$$(_, 2.4, `Create a JMP to the allocated space from PACKET.Assigner`)
+	Exe.SetJMP(PACKET.Assigner, freeVir);
+
+	if (Exe.Version > 11)
+	{
+		$$(_, 3.1, `Check if the previous statement is an assignment of the struct to EAX (instead of ECX)`)
+		let ins = Instr.FromAddr(PACKET.Assigner - 3);
+		if (ins.Codes[0] === 0x8B && ins.MRM.Data === 0x45)
+		{
+			$$(_, 3.2, `Change it to assign to ECX instead`)
+			ins.MRM.update(null, 1, null);
+			Exe.SetHex(ins.Addr, ins);
+		}
+	}
+
+	return true;
+};
+
+///
+/// \brief Wrappers for individual patches
+///
+CustomFirstKey  = CustomEncKeys;
+CustomSecondKey = CustomEncKeys;
+CustomThirdKey  = CustomEncKeys;
+
+///
+/// \brief Data for the patch functions
+///
+CustomEncKeys.Members = ['CustomFirstKey', 'CustomSecondKey', 'CustomThirdKey'];

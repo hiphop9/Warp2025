@@ -1,0 +1,110 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-10-30                                             *
+*   Last Modified : 2024-08-07                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Convenience class representing Instruction prefixes
+///
+if (typeof IPrefix === 'undefined') //avoid redefinition
+{
+	IPrefix = class
+	{
+		///
+		/// \brief Constructor
+		///
+		constructor(data)
+		{
+			this.Value = data;
+		}
+
+		///
+		/// \brief Simple comparison
+		///
+		is(p)
+		{
+			return (p instanceof IPrefix && this.Value === p.Value);
+		}
+
+		///
+		/// \brief toString override
+		///
+		toString()
+		{
+			return this.Value.toHex(1);
+		}
+	};
+
+	///
+	/// \brief Define all the prefixes
+	///
+	IPrefix.List = [
+		// Segment Overrides
+		['CS'   , 0x2E],
+		['DS'   , 0x3E],
+		['ES'   , 0x26],
+		['FS'   , 0x64],
+		['GS'   , 0x65],
+		['SS'   , 0x36],
+
+		// Operand Size Change/Override - 32 bit to 16 bit, 64 bit to 128 bit etc..
+		['OPCH' , 0x66],
+
+		// Address Override to 16 bit
+		['AD16' , 0x67],
+
+		// Repeat/Lock to grant exclusive use of all shared memory
+		['ILOCK' , 0xF0],
+
+		// String Manipulation
+		['IREPE' , 0xF2],
+		['IREPN' , 0xF3],
+	].map( ([name, value]) =>
+	{
+		Assign( name, `new IPrefix(${value})` );
+		return value;
+	});
+
+	IdentifyClass(IPrefix);
+
+	///
+	/// \brief Define the functions for the last 3 prefixes.
+	///
+	LOCK = _ =>
+		ILOCK + (_ ? _ : '')
+	;
+	IdentifyObj('LOCK');
+
+	for (const name of
+	[
+		'REPE',
+		'REPN'
+	])
+		Assign(name, `_ => _.replace(/^( 66)?/, '$1' + I${name})` );
+
+	REP = REPE;
+	IdentifyObj('REP');
+}

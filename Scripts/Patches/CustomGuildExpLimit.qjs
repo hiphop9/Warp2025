@@ -1,0 +1,75 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2018-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144)                                          *
+*   Created Date  : 2020-11-22                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+// TODO - Comparison not there in clients before 2018-06-21 . Need to check if the exp limit is really there in the client
+
+///
+/// \brief Change the Guild EXP limit from 50 to custom value in UIGuildPositionManageWnd_virt136
+///
+CustomGuildExpLimit = function(_)
+{
+	$$(_, 1, `Find the comparison`)
+	const parts =
+	[
+		TEST(EAX, EAX)    //test eax, eax
+	+	JS(' [0000..01]') //js short _addr1 (delta is 5 or 9)
+
+	,//1
+		CMP(EAX, 0x32)    //CMP EAX, 32h
+
+	,//2
+		JLE(Exe.Version > 11 ? WCp : POS2WC) //jle short _proceed or jle _proceed
+
+	,//3
+		PUSH_0            //push 0 ; _addr1
+	+	PUSH(0x32)        //push 32
+	+	PUSH(ROC.FullVer == 14.29 ? 0xD84 : 0xD9E) //push 0D9Eh/0D84h
+	+	CALL()            //call MsgStr
+	]
+	;
+	const addr = Exe.FindHex(parts);
+	if (addr < 0)
+		throw Error("Limit checker missing");
+
+	$$(_, 2.1, `Get the new value from user`)
+	const varName = '$guildExpLimit';
+	const newLimit = Exe.GetUserInput(varName, D_Uint8, "Exp Limit", "Enter new guild exp limit", 50, {max: 120});
+	if (newLimit === false)
+		Cancel("Exp Limit", 50);
+
+	$$(_, 2.2, `Set the new limit`)
+	Exe.SetFromVar(addr + parts.byteCount(0) + 2, varName);
+
+	return true;
+};
+
+///
+/// \brief Disable for older client since comparison isnt there (atleast in the place it was supposed to be)
+///
+CustomGuildExpLimit.validate = () =>
+	Exe.BuildDate > 20180600;

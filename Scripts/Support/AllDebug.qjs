@@ -1,0 +1,473 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-12-11                                             *
+*   Last Modified : 2024-08-15                                             *
+*                                                                          *
+\**************************************************************************/
+
+// Contains various functions useful for debugging code.
+
+///
+/// \brief Function for logging comments in patch & extension functions (including supporting functions) and console if requested
+///
+$$ = (pre, ver, msg) =>
+{
+	const txt =
+		ver == undefined ? pre :
+		msg == undefined ? pre + ' : ' + ver
+		                 : pre + ' : ' + ver + ' - ' + msg
+	;
+
+	if (txt != undefined && Log.valid())
+	{
+		Log.write(txt);
+
+		if (Log.Tee)
+			console.info(txt.replace(/</g, "&lt;"));
+
+		return true;
+	}
+
+	return false;
+};
+
+///
+/// \brief Same as above but always reports to console as well
+///
+$$$ = (pre, ver, msg) =>
+{
+	const txt =
+		ver == undefined ? pre :
+		msg == undefined ? pre + ' : ' + ver
+		                 : pre + ' : ' + ver + ' - ' + msg
+	;
+
+	if (txt != undefined && Log.valid())
+	{
+		Log.write(txt);
+		console.info(txt.replace(/</g, "&lt;"));
+
+		return true;
+	}
+
+	return false;
+};
+
+///
+/// \brief Function for adding Headers or Just Underlines to Logs and console if requested.
+///
+$_ = (...args) =>
+{
+	if (!Log.valid())
+		return false;
+
+	const tee = args.take_if('boolean', Log.Tee);
+	let msg = args.shift();
+	const bold = args.take_if('boolean', false);
+	const chr = args.take_if('string', '+');
+
+	let len;
+	switch (typeof msg)
+	{
+		case 'undefined':
+			return false;
+
+		case 'number':
+			len = msg;
+			break;
+
+		default:
+			msg = msg.toString();
+			len = msg.length;
+
+			Log.write(msg);
+
+			if (tee)
+			{
+				if (bold)
+					console.info("<b>" + msg + "</b>");
+				else
+					console.info(msg);
+			}
+			break;
+	}
+
+	if (len > 0)
+	{
+		const line = chr.repeat(len);
+		Log.write(line);
+
+		if (tee)
+		{
+			if (bold)
+				console.info("<b>" + line + "</b>");
+			else
+				console.info(line);
+		}
+	}
+
+	return true;
+};
+
+///
+/// \brief Same as $_ but add the line on top and bottom
+///
+_$_ = (...args) =>
+{
+	if (!Log.valid())
+		return false;
+
+	const tee = args.take_if('boolean', Log.Tee);
+	let msg = args.shift();
+
+	if (IsNum(msg))
+	{
+		$_(tee, msg, ...args);
+	}
+	else
+	{
+		msg = msg.toString();
+
+		if (msg.length)
+		{
+			$_(tee, msg.length, ...args);
+			$_(tee, msg, ...args);
+		}
+	}
+
+	return true;
+};
+
+///
+/// \brief Dump all the hex codes of a function in Output view and/or Log file
+///
+DumpFunc = (...args) =>
+{
+	const funcName = args.take_if('string', "UnknFunc");
+	let from = args.shift();
+	const atype = args.take_if('object', PHYSICAL);
+
+	if (!IsNum(from))
+		return;
+
+	if (atype === VIRTUAL)
+		from = Exe.Vir2Phy(from);
+
+	let to = Exe.GetSectEnd(CODE);
+	if (from >= to)
+		to = Exe.GetSectEnd(DIFF);
+
+	$$$(funcName + " = {");
+
+	if (from >= to)
+		return;
+
+	let ins = Instr.FromAddr(from);
+	while (ins.Addr < to)
+	{
+		$$$("\t" + ins);
+
+		if (ins.Codes[0] === 0xC3 || ins.Codes[0] === 0xC2) //retn
+			break;
+
+		ins.moveToNext();
+	}
+
+	$$$('}');
+};
+
+// For all the following, the output will be send using 'console'
+
+///
+/// \brief Aliases
+///
+Debug = console.log;
+Info = console.info;
+
+///
+/// \brief Write an empty line
+///
+NewLine = _ =>
+	console.info('') || true;
+
+///
+/// \brief Dump the key and value pairs of an object.
+///
+Dump = (name, obj) =>
+{
+	if (obj == undefined) //can be 0 or false so cant use !obj
+	{
+		obj = name;
+		name = obj.constructor.name;
+	}
+	else if (IsStr(name))
+	{
+		if (name.isEmpty())
+		{
+			name = obj.constructor.name;
+		}
+		else
+		{
+			name = name + " (" + obj.constructor.name + ")";
+		}
+	}
+	else
+	{
+		name = obj.constructor.name;
+	}
+
+	if (obj == undefined) //can be 0 or false so cant use !obj
+		return false;
+
+	console.log(name, "=>");
+
+	for (key in obj)
+	{
+		let val = obj[key]
+		if (IsArr(val))
+		{
+			ShowArr(val, "\t", key, true);
+		}
+		else
+		{
+			if (IsStr(val))
+				val = `"${val}"`;
+
+			console.info("\t", key, "=>", val);
+		}
+	}
+
+	return true;
+};
+
+///
+/// \brief Displays all the elements in the array hierarchically.
+///
+ShowArr = (...args) =>
+{
+	const arr = args.last();
+	if (!IsArr(arr))
+		return false;
+
+	const useInfo = args.take_if('boolean', false);
+	const name = args.take_if('string', 'Array');
+
+	const result = name.match(/^\t+/);
+	const prefix = IsArr(result) ? result[0] : '';
+
+	if (useInfo)
+		console.info(name, "= [");
+	else
+		console.log(name, "= [");
+
+	arr.forEach( (item, index) =>
+	{
+		if (IsArr(item))
+		{
+			ShowArr(true, prefix + "\t" + index.toString(), item);
+		}
+		else
+		{
+			if (IsStr(item))
+				item = `"${item}"`;
+
+			console.info(`${prefix}\t${index}`, "=>", item);
+		}
+	});
+
+	console.info(prefix, ']');
+
+	return true;
+};
+
+///
+/// \brief Show the variable provided (wrapped in {}) and it's value.
+///
+ShowVar = (...args) =>
+{
+	const obj = args.last();
+	if (typeof obj !== 'object')
+		return false;
+
+	const [varName] = Object.keys(obj);
+	if (!varName)
+		return false;
+
+	const prefix = args.take_if('string', '');
+
+	let value = obj[varName];
+	if (IsArr(value))
+	{
+		console.info(prefix, varName, "= [");
+
+		value.forEach( (elem, idx) =>
+			ShowVar(prefix + "\t", {[idx] : elem})
+		);
+
+		console.info(prefix, ']');
+	}
+	else
+	{
+		if (IsStr(value))
+			value = `"${value}"`;
+
+		console.info(prefix, varName, "=>", value);
+	}
+
+	return true;
+};
+
+///
+/// \brief Shows the physical and virtual cntparts of an address.
+///        You can also provide variable wrapped in {} to display it's name as the prompt.
+///
+ShowAddr = (...args) =>
+{
+	let prompt, addr;
+
+	const obj = args.take_if('object', null);
+	if (obj === null)
+	{
+		prompt = args.take_if('string', 'Addr');
+		addr = args.take_if('number', -1);
+	}
+	else
+	{
+		prompt = Object.keys(obj)[0];
+		addr = obj[prompt];
+	}
+
+	const type = args.take_if('object', PHYSICAL);
+
+	let phy, vir;
+	if (type === PHYSICAL)
+	{
+		phy = addr;
+		vir = Exe.Phy2Vir(addr);
+	}
+	else
+	{
+		phy = Exe.Vir2Phy(addr);
+		vir = addr;
+	}
+
+	if (phy >= 0)
+		phy = "0x" + phy.toString(16);
+
+	if (vir >= 0)
+		vir = "0x" + vir.toString(16);
+
+	console.info(prompt, "=>", phy, '(', vir, ')');
+};
+
+///
+/// \brief Shows the physical and virtual counterparts of multiple addresses
+///
+ShowAddrs = (...args) =>
+{
+	let prompt = args.take_if('string', 'Addrs');
+
+	const result = prompt.match(/^\t+/);
+	const prefix = IsArr(result) ? result[0] : '';
+
+	let addrs = args.shift();
+	if (!IsArr(addrs))
+	{
+		if (typeof(addrs) === 'object')
+		{
+			prompt = Object.keys(addrs)[0];
+			addrs = addrs[prompt];
+		}
+	}
+
+	if (!IsArr(addrs))
+		return false;
+
+	const isPhy = (args.take_if('object', PHYSICAL) === PHYSICAL);
+
+	console.info(prompt, "= [");
+	addrs.forEach( (addr, i) =>
+	{
+		if (!IsNum(addr))
+			return;
+
+		let phy, vir;
+		if (isPhy)
+		{
+			phy = addr;
+			vir = Exe.Phy2Vir(addr);
+		}
+		else
+		{
+			phy = Exe.Vir2Phy(addr);
+			vir = addr;
+		}
+
+		if (phy >= 0)
+			phy = "0x" + phy.toString(16);
+
+		if (vir >= 0)
+			vir = "0x" + vir.toString(16);
+
+		console.info(prefix + "\t", i, "=>", phy, '(', vir, ')');
+	});
+
+	console.info(prefix + ']');
+
+	return true;
+};
+
+///
+/// \brief Reset the internal counter.
+///
+ResetC = _ =>
+	(console.cnt = _ || 0) || true;
+
+///
+/// \brief Increment the counter.
+///
+IncrC = _ =>
+	(console.cnt = (console.cnt || 0) + (_ || 1)) || true;
+
+///
+/// \brief Display the current count along with version & build date.
+///
+ShowC = (...args) =>
+{
+	let suf = [];
+	while (args.length > 0)
+	{
+		const obj = args.take_if('object', null);
+		if (obj === null)
+		{
+			suf.push(":: " + args.shift());
+		}
+		else
+		{
+			for (const k in obj)
+				suf.push(`:: ${k} = ${obj[k]}`);
+		}
+	}
+	console.log('cnt' in console ? console.cnt : 'Counter not set', Exe.Version + '.' + Exe.MinorVer, Exe.BuildDate, ...suf) || true;
+}

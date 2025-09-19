@@ -1,0 +1,176 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Shinryo                                           *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo, Neo-Mind                                      *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Make the client call our DNS resolution function before g_accountAddr is accessed.
+///        Function replaces g_accountAddr value
+///
+EnableDnsSupport = function(_)
+{
+	$$(_, 1.1, `Find the common IP address across all clients`)
+	let addr = Exe.FindText("211.172.247.115");
+	if (addr < 0)
+		throw Error("Common IP not found");
+
+	$$(_, 1.2, `Find the g_accountAddr assignment to the IP`)
+	addr = Exe.FindHex( MOV([POS4WC], addr) ); //mov dword ptr [g_accountAddr], offset "211.172.247.115"
+	if (addr < 0)
+		throw Error("g_accountAddr assignment not found");
+
+	$$(_, 1.3, `Extract g_accountAddr`)
+	const AccountAddr = Exe.GetHex(addr + 2, 4);
+
+	$$(_, 2.1, `Find essential improts & strings`)
+	
+	// gethostbyname
+	const GetHostByName = Exe.FindFunc("gethostbyname", 52, "ws2_32.dll");//(#52 when imported by ordinal)
+	if (GetHostByName < 0)
+		throw Error("gethostbyname function not found");
+
+	// printFunc
+	ROC.findImports();
+
+	// IP address format
+	const IPformat = Exe.FindText("%d.%d.%d.%d");
+	if (IPformat < 0)
+		throw Error("IP format not found");
+	
+	$$(_, 2.2, `Setup the ip address`)
+	const [, ipAddr] = Exe.Allocate(15); //3 dots + 4 * 3 digits
+
+	$$(_, 2.3, `Construct the function`)
+	let code =
+		PUSHAD                          //pushad
+	+	MOV(ESI, [AccountAddr])         //mov esi, dword ptr [g_accountAddr]
+	+	PUSH(ESI)                       //push esi
+	+	CALL([GetHostByName])           //call dword ptr [<&WS2_32.#52>] ; WS2_32.gethostbyname()
+	+	TEST(EAX, EAX)                  //test eax, eax
+	+	JNZ(2)                          //jnz short _proceed
+	+	POPAD                           //popad
+	+	RETN()                          //retn
+	+	MOV(ECX, [EAX, 0xC])            //mov ecx, dword ptr [eax+0Ch] ; _proceed
+	+	MOV(EDX, [ECX])                 //mov edx, dword ptr [ecx]
+	+	MOV(EAX, EDX)                   //mov eax, edx
+	+	MOVZX(ECX, BYTE_PTR, [EAX, 3])  //movzx ecx, byte ptr [eax+3]
+	+	PUSH(ECX)                       //push ecx
+	+	MOVZX(ECX, BYTE_PTR, [EAX, 2])  //movzx ecx, byte ptr [eax+2]
+	+	PUSH(ECX)                       //push ecx
+	+	MOVZX(ECX, BYTE_PTR, [EAX, 1])  //movzx ecx, byte ptr [eax+1]
+	+	PUSH(ECX)                       //push ecx
+	+	MOVZX(ECX, BYTE_PTR, [EAX])     //movzx ecx, byte ptr [eax]
+	+	PUSH(ECX)                       //push ecx
+	+	PUSH(IPformat)                  //push offset "%d.%d.%d.%d"
+	+	PUSH(ipAddr)                    //push <ipAddr>
+	+	CALL([ROC.SprintF])             //call dword ptr [<printFunc>] ; sprintf/wsprintfA
+	+	ADD(ESP, 0x18)                  //add esp, 18h
+	+	MOV([AccountAddr], ipAddr)      //mov dword ptr [g_accountAddr], <ipAddr> ; Replace g_accountAddr current value with its ip address
+	+	POPAD                           //popad
+	+	RETN()                          //retn
+	;
+
+	$$(_, 2.4, `Add the code`)
+	const [, assignFunc] = Exe.AddHex(code, 0x10);
+
+	$$(_, 3.1, `Find the string 'port'`)
+	addr = Exe.FindText("port");
+	if (addr < 0)
+		throw Error("'port' missing");
+
+	$$(_, 3.2, `Find it's references`)
+	code =
+		PUSH(addr)      //push "port"
+	+	MOV(ECX, R32)   //mov ecx, regA
+	+	CALL()          //call XMLElement::FindChild
+	;
+
+	let addrs = Exe.FindHexN(1, 3, code);
+	if (addrs.isEmpty())
+		throw Error("Unexpected no of 'port' references");
+	
+	$$(_, 3.3, `Extract the FindChild address`)
+	const csize = code.byteCount();
+	const FindChild = Exe.GetTgtAddr(addrs[0] + csize);
+
+	$$(_, 3.4, `Construct the first caller code`)
+	code =
+		CALL(Filler(1))  //call <assignFunc>
+	+	JMP(Filler(2))   //jmp XMLElement::FindChild
+	;
+
+	$$(_, 3.5, `Prepare the arguments for auto-hook`)
+	const args =
+	{
+		targets : {
+			1 : assignFunc,
+			2 : FindChild
+		},
+		isCall : true,
+		srcOffset : csize - 1
+	};
+
+	$$(_, 3.6, `Add the code & update the CALL targets`)
+	AutoHook(addrs, code, args);
+
+	$$(_, 4.1, `Find the string 'ws2_32.dll'`)
+	const ws2Str = Exe.FindText("ws2_32.dll");
+	if (ws2Str < 0)
+		throw Error("ws2_32 not found");
+	
+	$$(_, 4.2, `Find it's reference`)
+	code =
+		PUSH(ws2Str)        //push "ws2_32.dll"
+	+	CALL(R32)           //call regA
+	;
+	addr = Exe.FindHex(code);
+	if (addr < 0)
+	{
+		code =
+			PUSH(ws2Str)    //push "ws2_32.dll"
+		+	CALL([POS3WC])  //call dword ptr [<&KERNEL32.LoadLibraryA>]
+		;
+		addr = Exe.FindHex(code);
+	}
+	if (addr < 0)
+		throw Error("ws2_32 not PUSHed");
+
+	$$(_, 4.3, `Get the next address`)
+	const retnAddr = Exe.Phy2Vir(addr + 5, CODE);
+
+	$$(_, 4.4, `Construct the second caller code`)
+	code =
+		PUSH(ws2Str)      //push "ws2_32.dll"
+	+	PUSH(retnAddr)    //push <retnAddr>
+	+	JMP(Filler(1))    //jmp <assignFunc>
+	;
+
+	$$(_, 4.5, `Add the code and jump to it from addr`)
+	AutoHook(addr, code, { targets : {1 : assignFunc} });
+
+	return true;
+};

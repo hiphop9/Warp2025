@@ -1,0 +1,153 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2015 Curiosity                                           *
+*   Copyright (C) 2015-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Curiosity, Neo-Mind                                    *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Make models in front of player turn transparent
+///
+RestoreModelCulling = function(_)
+{
+	$$(_, 1.1, `Find C3dActor::CullByOBB`)
+	const sreg = ROC.StkReg;
+	let parts =
+	[//0
+		JE(WCp)						//je short _skip
+
+	,//1
+		Exe.BuildDate < 20150000
+	?	MOV(ECX, [sreg, 8])         //mov ecx, dword ptr [sreg+8] ; only for older clients
+	:	''
+
+	,//2
+		LEA(EAX, [ESI, 0x130])   	//lea eax, [esi+130h] (eax = &m_oBoundingBox)
+	+   PUSH_EAX                 	//push eax
+
+	,//3
+		Exe.BuildDate < 20150000
+	?	PUSH(ECX)             	    //push ecx OR
+	:	PUSH([EBP, 8]) 		        //push dword ptr [ebp+8] ; ARG.1
+	];
+
+	let oldStyle = true;
+	let addr = Exe.FindHex(parts);
+
+	if (addr < 0 && Exe.BuildDate > 20190000)
+	{
+		parts[0] = JNE(WCp);		//jne short _skip
+		parts[2] =
+			LEA(EAX, [ESI, 0x98])   //lea eax, [esi+98h] (eax = &m_oBoundingBox)
+		+   PUSH_EAX                //push eax
+		;
+		oldStyle = false;
+		addr = Exe.FindHex(parts);
+	}
+
+	if (addr < 0)
+		throw Error("CullByOBB not found");
+	
+	$$(_, 1.2, `NOP out the conditional jump`)
+	Exe.SetNOPs(addr, 2);
+
+	if (oldStyle)
+	{
+		$$(_, 2.1, `Find location of C3dNode::SetToAlpha CALL`)
+		if (Exe.Version === 6) //VC6
+			addr = Exe.FindHex( MOV(ECX, [ESI, 8]) + CALL(), addr + 7, addr + 0x40); //mov ecx, dword ptr [esi+8]
+			                                                                         //call C3dNode::SetToAlpha
+		else
+			addr = Exe.FindHex( MOV(ECX, [ESI]) + CALL(), addr + 7, addr + 0x20);    //mov ecx, dword ptr [esi]
+			                                                                         //call C3dNode::SetToAlpha
+
+		if (addr < 0)
+			throw Error("SetToAlpha CALL not found");
+
+		$$(_, 2.2, `Change the CALL to m_isHalfAlpha assignment`)
+		code = MOV(BYTE_PTR, [ESI, 0x1EC], 1); // mov byte ptr [esi+1ECh], 1h ; (m_isHalfAlpha = 1)
+
+		if (Exe.Version === 6) //VC6 has extra byte
+			code = NOP + code; //so prefix a NOP
+
+		Exe.SetHex(addr, code);
+	}
+	else
+	{
+		$$(_, 3.1, `Find the comparison before it`)
+		const cmpAddr = Exe.FindLastHex(CMP(BYTE_PTR, [ESI, POS2WC], 1), addr, addr - 10);
+		if (addr < 0)
+			throw Error("Vital comparison missing");
+		
+		$$(_, 3.2, `Extract the displacement`)
+		const disp = Instr.FromAddr(cmpAddr).Disp;
+		
+		$$(_, 3.3, `Find other such comparisons followed by JNE & NOP the jump`) //m_isHideCheck tests
+		const jne = JNE(WCp);
+		for (const memAddr of Exe.FindHexN( CMP(BYTE_PTR, [ESI, disp], 1) ))
+		{
+			if (memAddr === cmpAddr)
+				continue;
+			
+			addr = Exe.FindHex(jne, memAddr, memAddr + 14);
+			if (addr > 0)
+				Exe.SetNOPs(addr, 2);
+		}
+	}
+	
+	return true;
+};
+
+/** NOTES - Curiosity
+ * This seems to be yet another features that never got completed.
+ *
+ * Source:
+ *
+ * void C3dActor::CullByOBB(lineSegment3d *ray)
+ * {
+ *     if (this->m_isHideCheck)
+ *     {
+ *         if (CheckLineSegmentOBBIntersect(ray, &this->m_oBoundingBox))
+ *             this->m_node->SetAlpha();
+ *     }
+ * }
+ *
+ * C3dActor instances are always initialized with m_isHideCheck = false.
+ * C3dNode::SetAlpha sets C3dNode::m_isAlphaForPlayer, but this letiable
+ * only affects lighting and not opacity. We can instead use
+ * C3dActor::m_isHalfAlpha, which affects C3dActor::m_fadeAlphaCnt.
+ *
+ * Our desired result:
+ *
+ * void C3dActor::CullByOBB(lineSegment3d *ray)
+ * {
+ *     if (1)
+ *     {
+ *         if (CheckLineSegmentOBBIntersect(ray, &this->m_oBoundingBox))
+ *             this->m_isHalfAlpha = 1;
+ *     }
+ * }
+ *
+ */

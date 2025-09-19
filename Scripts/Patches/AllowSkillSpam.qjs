@@ -1,0 +1,158 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2019 Functor                                             *
+*   Copyright (C) 2019-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2021-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Functor, Andrei (4144), Neo-Mind                       *
+*   Created Date  : 2020-11-22                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+// TODO - Pre 2017 the patterns are completely missing
+
+///
+/// \brief Enforce Movement of g_session.field_5ADC to ensure spam skill by hotkey
+///
+AllowSkillSpam = function(_)
+{
+	$$(_, 1, `Find the comparison`)
+	let parts =
+	[
+		MOV(EAX, [POS4WC])    //mov eax, dword ptr [g_session.virtual_key_code]
+	,
+		CMP(EBX, 0x7F4)       //cmp ebx, 7F4h
+	,
+		CMOVZ(EAX, [POS4WC])  //cmovz eax, dword ptr [g_session.field_5ADC]
+	+	MOV([POS4WC], EAX)    //mov dword ptr [g_session.virtual_key_code], eax
+	];
+
+	let addr = Exe.FindHex(parts);
+	if (addr < 0 && ROC.IsZero)
+	{
+		parts =
+		[
+			""
+		,
+			CMP(R32, 0x7F4)       //cmp regA, 7F4h
+		,
+			MOV(EAX, [POS4WC])    //mov eax, dword ptr [g_session.virtual_key_code]
+		+	MOV(R32, 0x5D)        //mov regB, 5Dh
+		+	CMOVE(EAX, [POS4WC])  //cmovz eax, dword ptr [g_session.field_5ADC]
+		+	MOV([POS4WC], EAX)    //mov dword ptr [g_session.virtual_key_code], eax
+		];
+		addr = Exe.FindHex(parts);
+	}
+	if (addr > 0)
+	{
+		$$(_, 2.1, `Prepare replacement code - CMP is for triggering Zero Flag`)
+		const code =
+			CMP(EBX, EBX)  //cmp ebx, ebx
+		+	NOPs(parts.byteCount(1) - 2) //4 or 3 byte NOP
+		;
+
+		$$(_, 2.2, `Overwrite the original CMP`)
+		Exe.SetHex(addr + parts.byteCount(0), code);
+	}
+	else if (Exe.BuildDate < 20180700)
+	{
+		throw Error("Pattern not found");
+	}
+	else
+	{
+		$$(_, 3.1, `Find the new comparison`)
+		const mvReg = MOV(R32, [EBP, NEG2WC]);
+		let code =
+			CMP(Exe.Version < 14 ? R32 : EAX, 0x7F4) //cmp regA, 7F4h ; regA = EAX for VC14.16
+		+	JE(WCp)                                  //je short _skip
+		+	(ROC.FullVer == 14.29 ? '' : mvReg)      //<blank> OR mov regB, dword ptr [LOCAL.x]
+		+	MOV(R32, 0x438)                          //mov regC, 438h
+		+	MOV([EBP, NEG2WC], R16)                  //mov word ptr [LOCAL.y], reg16D
+		+	(ROC.FullVer == 14.29 ? mvReg : '')      //mov regB, dword ptr [LOCAL.x] or <blank>
+		;
+
+		addr = Exe.FindHex(code);
+		if (addr < 0)
+			throw Error("New Pattern not found");
+
+		$$(_, 3.2, `Extract the comparison`)
+		const cmp74 = Instr.FromAddr(addr);
+
+		$$(_, 3.3, `Find the code where the comparison with the virtual_key_code is made`)
+		code =
+			TEST(R32, R32)     //test regA, regA
+		+	JZ(WCp)            //jz short _skip
+		+	CMP([POS4WC], R32) //cmp dword ptr [tgt], regB
+		+	JE(WCp)            //je short _assign
+		+	MOV(ECX, POS4WC)   //mov ecx, offset#1
+		+	CALL(ALLWC)        //call assigner
+		+	MOV([POS4WC], R32) //mov dword ptr [src], regB ; _assign
+		;
+		addr = Exe.FindHex(code);
+		if (addr < 0)
+			throw Error("virtual_key_code reference missing");
+
+		$$(_, 3.4, `Extract the first 4 instructions`)
+		const test0 = Instr.FromAddr(addr);
+		let jz1 = test0.getNext();
+		const rcmp = jz1.getNext();
+		let jz2 = rcmp.getNext();
+
+		$$(_, 3.5, `Update the jumps`)
+		jz1.Immd -= (rcmp.Size + jz2.Size);
+		jz2.Immd += (test0.Size + jz1.Size);
+
+		$$(_, 3.6, `Reorder and apply`)
+		Exe.SetHex(addr, rcmp + jz2 + test0 + jz1);
+
+		$$(_, 3.7, `Extract the target address`)
+		const tgt = rcmp.Disp;
+
+		$$(_, 4.1, `Construct the new function`)
+		code =
+			PUSH_EAX             //push eax
+		+	MOV(EAX, [tgt + 4])  //mov eax, dword ptr [src]
+		+	MOV([tgt], EAX)      //mov dword ptr [tgt], eax
+		+	POP_EAX              //pop eax
+		+	cmp74                //cmp regA, 7F4h ; regA = EAX for VC14.16
+		+	RETN()               //retn
+		;
+
+		$$(_, 4.2, `Prepare the arguments for auto-hook`)
+		const args =
+		{
+			isCall: true,
+			nops: cmp74.Size - 5
+		};
+
+		$$(_, 4.3, `Add our code and call it from the original comparison address`)
+		AutoHook(cmp74.Addr, code, args);
+	}
+
+	return true;
+};
+
+///
+/// \brief Disable for Pre-2017 (for now).
+///
+AllowSkillSpam.validate = () =>
+	Exe.BuildDate > 20170000;

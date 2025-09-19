@@ -1,0 +1,154 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2020-2024 X-EcutiOnner (xex.ecutionner@gmail.com)        *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANT??ILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144), X-EcutiOnner                            *
+*   Created Date  : 2021-01-23                                             *
+*   Last Modified : 2024-09-03                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the CALL after comparison inside FindFileData function
+///        for ignore to reading SignBoardList.lub file
+///
+SkipSignBoard = function(_)
+{
+    $$(_, 1.1, `Prepare the template to search with`)
+	let template =
+	[
+		MOV(ECX, [Exe.BuildDate > 20240000 ? EDI: ESI, POS2WC])  //mov ecx, dword ptr [edi/esi + offA]
+	,
+		PUSH_0                   //push 0
+	+	PUSH_1                   //push 1
+	+	PUSH(Filler(1))          //push <pathAddr>
+	,
+		CALL()                   //call CLua::Loader
+	];
+	
+	$$(_, 1.2, `Find the first lua file call`)
+	let code = template.map( elem => SwapFillers(elem, {1: this.PathAddr}) );
+	let idx = 0;
+	if (ROC.FullVer == 14.29 && Exe.BuildDate < 20240000)
+	{
+		idx = 1;
+		[ code[0], code[1] ] = [ code[1], code[0] ] ;
+	}
+
+	let beginAddr1 = Exe.FindHex( code );
+	if (beginAddr1 < 0)
+		throw Error("SignBoardList_F not used");
+	
+	const csize = code.byteCount();
+	
+	$$(_, 1.3, `Update the MOV instruction and save the end address`)
+	template[0] = Instr.FromAddr(beginAddr1 + code.byteCount(0, idx) - 6);
+	const endAddr1 = beginAddr1 + csize + 4; //after the CALL
+
+	$$(_, 2.1, `Find the string 'Lua Files\\SignBoardList'`)
+    const prefAddr = Exe.FindText("Lua Files\\SignBoardList", CASE_INSENSITIVE);
+	if (prefAddr < 0)
+		throw Error("SignBoardList not found");
+
+	$$(_, 2.2, `Find it's reference after endAddr1`)
+	const beginAddr2 = Exe.FindHex( SwapFillers( template, {1: prefAddr} ) , endAddr1 , endAddr1 + 0x40);
+	if (beginAddr2 < 0)
+		throw Error("SignBoardList not used");
+
+	$$(_, 2.3, `Save the end address`)
+	const endAddr2 = beginAddr2 + csize + 4; //after the CALL
+
+	if (beginAddr2 === endAddr1)
+	{
+		$$(_, 3.1, `We can club it and keep 1 set of NOPs`)
+		Exe.SetNOPs(beginAddr1, endAddr2 - beginAddr1);
+	}
+	else
+	{
+		$$(_, 3.2, `We need to put individual sets of NOPs`)
+		Exe.SetNOPs(beginAddr1, endAddr1 - beginAddr1);
+		Exe.SetNOPs(beginAddr2, endAddr2 - beginAddr2);
+	}
+
+    return true;
+}
+
+///
+/// \brief Disable for Unsupported Clients - Lua file must be present
+///
+SkipSignBoard.validate = function()
+{
+	this.PathAddr = Exe.FindText("Lua Files\\SignBoardList_F");
+	return (this.PathAddr > 0);
+};
+
+///
+/// \brief Modify TownInfo loading code to skip calling the function which performs the loading process.
+///
+SkipTownInfo = function(_)
+{
+	$$(_, 1.1, `Find the string 'TownInfo file Init'`)
+    const strAddr = Exe.FindText("TownInfo file Init");
+    if (strAddr < 0)
+        throw Error("Init string missing");
+
+    $$(_, 1.2, `Use it to find TownInfo loading code`)
+	const pushZero = Exe.Version > 10 ? PUSH_0 : PUSH(EBX);
+	const code =
+		TEST(AL, AL)  //test al, al ; result of the function which loads the towninfo
+	+	JNZ(WCp)      //jnz short _skip
+	+	pushZero      //push 0 OR ebx
+	+	PUSH(POS4WC)  //push immA
+	+	PUSH(strAddr) //push offset "TownInfo file Init"
+	+	pushZero      //push 0 OR ebx
+	;
+
+	const addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Pattern not found");
+
+	$$(_, 2.1, `Find the CALL before it`)
+	const callAddr = Exe.GetUint8(addr - 6) === 0x8B
+		? (addr - 11)
+		: (addr - 5)
+		;
+
+	if (Exe.GetUint8(callAddr) !== 0xE8)
+		throw Error("CALL not found");
+
+	$$(_, 2.2, `Change the CALL to make EAX 0`)
+	Exe.SetHex(callAddr,
+		XOR(EAX, EAX)    //xor eax, eax
+	+	NOP3             //3 byte nop
+	);
+
+	$$(_, 2.3, `Change the JNZ to JMP`)
+	Exe.SetJMP(addr + 2);
+
+    return true;
+};
+
+///
+/// \brief Disable for Unsupported Clients - Check for the lua file
+///
+SkipTownInfo.validate = () =>
+	Exe.FindText("System/Towninfo.lub", PHYSICAL) > 0;

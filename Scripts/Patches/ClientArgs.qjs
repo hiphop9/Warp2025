@@ -1,0 +1,114 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Shinryo                                           *
+*   Copyright (C) 2020-2024 Secret                                         *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo, Secret                                        *
+*   Created Date  : 2020-11-10                                             *
+*   Last Modified : 2024-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the conditional jump after the 1rag1 comparison to
+///        JMP over the 1*1 checks
+///
+No1and1Arg = function(_)
+{
+	$$(_, 1, `Find the string '1rag1'`)
+	let addr = Exe.FindText("1rag1");
+	if (addr < 0)
+		throw Error("'1rag1' not found");
+
+	$$(_, 2, `Find where it is PUSHed`)
+	const prefix =
+		PUSH(addr)      //push offset "1rag1"
+	+	PUSH_R          //push regA
+	+	(Exe.Version > 6 && Exe.Version < 14
+	?
+		CALL(R32)       //call regB ; strstr function compares regA with "1rag1". regB is ESI in most clients
+	:
+		CALL(ALLWC)     //call <strstr>
+	)
+	+	ADD(ESP, 8)     //add esp, 8
+	+	TEST(EAX, EAX)  //test eax, eax
+	;
+
+	let suffix =
+		JNZ(WCp)        //jnz short _next
+	;
+	addr = Exe.FindHex(prefix + suffix);
+
+	if (addr < 0)
+	{
+		suffix = JNZ(POS2WC); //_next is farther away
+		addr = Exe.FindHex(prefix + suffix);
+	}
+	if (addr < 0)
+		throw Error("'1rag1' not used");
+
+	$$(_, 3, `Change the conditional jump`)
+	Exe.SetJMP(addr + prefix.byteCount());
+
+	return true;
+};
+
+///
+/// \brief Change the JZ to JMP after '/account' argument check
+///        ignoring it's results
+///
+IgnoreAccArg = function(_)
+{
+	$$(_, 1, `Find where '/account:' is PUSHed`)
+	let addr = Exe.FindHex(PUSH(this.StrAddr));
+	if (addr < 0)
+		throw Error("'/account:' not used");
+
+	$$(_, 2.1, `Find the comparison after strstr CALL`)
+	code =
+		ADD(ESP, 8)     //add esp, 8
+	+	TEST(R32, R32)  //test regA, regA
+	+	JZ(WCp)         //jz short _loadClientInfo
+	;
+	let addr2 = Exe.FindHex(code, addr + 5, addr + 0x50);
+
+	if (addr2 < 0)
+	{
+		code = code.replace(TEST(R32, R32), CMP(R32, R32)); //change the 'test' to 'cmp'
+		addr2 = Exe.FindHex(code, addr + 5, addr + 0x50);
+	}
+	if (addr2 < 0)
+		throw Error("Comparison not found.");
+
+	$$(_, 2.2, `Replace JZ with JMP`)
+	Exe.SetJMP(addr2 + 5);
+
+	return true;
+};
+
+///
+/// \brief Only needed if the string is acually present
+///
+IgnoreAccArg.validate = function()
+{
+	this.StrAddr = Exe.FindText("/account:");
+	return (this.StrAddr > 0);
+};

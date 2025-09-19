@@ -1,0 +1,272 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2014-2023 Neo Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2023-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Store Char server name before calling the "main" Lua function &
+///        alter the "main" Lua Func call routine inside iteminfo loader to use stored 'server name' argument.
+///
+ItemInfoPerServer = function(_)
+{
+	$$(_, 1.1, `Find the pattern before Server Name is pushed to StringAllocator Function`)
+	let code =
+		SHL(R32, 5)                             //shl regA, 5 ; regA is usually EDI
+	+	CMP(WORD_PTR, [R32, R32, POS2WC], 0x3)  //cmp word ptr [regB + regA + dispC], 3 ; dispC is usually 1F4
+	;
+
+	let addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Pattern not found");
+
+	$$(_, 1.2, `Set addr to location after the CMP`)
+	addr += code.byteCount();
+
+	$$(_, 1.3, `Find the StringAllocator call after pattern`)
+	code =
+		MOV(ECX, POS4WC)         //mov ecx, offset
+	+	CALL(ALLWC)              //call <StringAllocator>
+	+	MOV(R32, [R32, POS2WC])  //mov regA, dword ptr [regB + dispB]
+	;
+	let directCALL = true;
+	let addr2 = Exe.FindHex(code, addr, addr + 0x40);
+
+	if (addr2 < 0)
+	{
+		code = code.replace(CALL(ALLWC), CALL([POS4WC])); //call dword ptr [StringAllocator]
+		directCALL = false;
+		addr2 = Exe.FindHex(code, addr, addr + 0x40);
+	}
+	if (addr2 < 0)
+		throw Error("StringAllocator CALL missing");
+
+	$$(_, 1.4, `Save the address after the MOV ECX`)
+	const allocInject = addr2 + 5;
+
+	$$(_, 2.1, `Find where ItemInfo Error string is PUSHed`)
+	addr = Exe.FindHex( PUSH(this.StrAddr) );
+	if (addr < 0)
+		throw Error("ItemInfo ErrStr not used");
+
+	$$(_, 2.2, `Find the loader CALL before the PUSH`)
+	code =
+		MOV(ECX, [POS4WC])  //mov ecx, dword ptr [refAddr]
+	+	CALL()              //call <iteminfoLoader>
+	;
+
+	addr = Exe.FindLastHex(code, addr, addr - 0x30);
+	if (addr < 0)
+		throw Error("ItemInfo loader missing");
+
+	$$(_, 2.4, `Extract the MOV ECX statement`)
+	const refMOV = Exe.GetHex(addr, 6);
+
+	$$(_, 2.5, `Change the MOV statement to JMP for skipping the loader. Also set AL to 1 (faux return value from the loader)`)
+	const code2 =
+		MOV(AL, 1)  //mov al, 1
+	+	JMP(7)      //jmp _skip ; to location after 'call <iteminfoLoader>'
+	;
+	Exe.SetHex(addr, code2);
+
+	$$(_, 2.6, `Set addr to location of the iteminfoLoader function`)
+	addr = Exe.GetTgtAddr(addr + code.byteCount(), PHYSICAL);
+
+	$$(_, 2.7, `Save its VIRTUAL address`)
+	const iiLoaderFunc = Exe.Phy2Vir(addr);
+
+	$$(_, 3.1, `Find the string 'main'`)
+	addr2 = Exe.FindText("main");
+	if (addr2 < 0)
+		throw Error("'main' not found");
+
+	$$(_, 3.2, `Find the "main" PUSH to Lua stack inside iteminfoLoader`)
+	code =
+		PUSH(addr2)    //push offset "main"
+	+ 	PUSH(-0x2712)  //push -2712h
+	;
+	addr2 = Exe.FindHex(code, addr, addr + 0x200);
+	if (addr2 < 0)
+		throw Error("'main' not used");
+
+	$$(_, 3.3, `Set addr2 to location after the PUSHes`)
+	addr2 += code.byteCount();
+
+	$$(_, 3.4, `Find the CALL to Lua caller after it`)
+	const ins = FindInstr(i => i.Codes[0] === 0xE8, addr2, addr2 + 10);
+	if (ins === false)
+		throw Error("CALL missing after 'main' PUSH");
+
+	$$(_, 3.3, `Save the location of the CALL`)
+	const mainInject = ins.Addr;
+
+	$$(_, 3.4, `Find the arg count PUSHes after it`)
+	addr = Exe.FindHex(PUSH_0 + PUSH_2 + PUSH_0, mainInject + 5, mainInject + 0x20);
+	if (addr < 0)
+		throw Error("Arg Count PUSH missing");
+
+	$$(_, 3.5, `Change the last PUSH 0 to PUSH 1 (since we have 1 input argument)`)
+	Exe.SetInt8(addr + 5, 1);
+
+	$$(_, 4.1, `Find the location where the iteminfo copier is called`)
+	code =
+		refMOV          //mov ecx, dword ptr [refAddr]
+	+	PUSH(POS4WC)    //push offset <iiAddr>
+	+	CALL(NEG3WC)    //call <iteminfoCopier>
+	;
+	addr = Exe.FindHex(code);
+
+	if (addr < 0)
+	{
+		code = code.replace( CALL(NEG3WC), CALL(POS3WC) );
+		addr = Exe.FindHex(code);
+	}
+	if (addr < 0)
+		throw Error("ItemInfo copy function missing");
+
+	addr += refMOV.byteCount();
+
+	$$(_, 4.2, `Extract the PUSH statement and Copier Function address`)
+	const iiPush = Exe.GetHex(addr, 5);
+	const iiCopierFunc = Exe.GetTgtAddr(addr + 6);
+
+	$$(_, 5.1, `Ensure LUA object is loaded`)
+	LUA.load();
+
+	$$(_, 5.2, `Find the 's' input Push Function call inside the LuaFn Caller`)
+	addr2 = Exe.Vir2Phy(LUA.FnInvoker, CODE);
+	let prefix =
+		MOV(R32, [R32])  //mov regA, dword ptr [regB]
+	+	MOV(R32, [R32])  //mov regC, dword ptr [regD]
+	+	ADD(R32, 4)      //add regB, 4
+	+	PUSH_R           //push regA
+	+	PUSH_R           //push regC
+	;
+	const suffix =
+		CALL(ALLWC)      //call <StringPusher>
+	+	ADD(ESP, 8)      //add esp, 8
+	;
+	addr = Exe.FindHex(prefix + suffix, addr2, addr2 + 0x180);
+
+	if (addr < 0)
+	{
+		prefix =
+			PUSH([R32])  //push dword ptr [regB]
+		+	ADD(R32, 4)  //add regB, 4
+		+	PUSH([R32])  //push dword ptr [regD]
+		;
+		addr = Exe.FindHex(prefix + suffix, addr2, addr2 + 0x180);
+	}
+	if (addr < 0)
+		throw Error("String PUSHer missing");
+
+	addr += prefix.byteCount() + 1;
+
+	$$(_, 5.2, `Extract the Function address`)
+	const strPushFunc = Exe.GetTgtAddr(addr);
+
+	$$(_, 6.1, `Construct code to Push String after "main" push`)
+	code =
+		CALL(Filler(1))    //call <LuaFnNamePusher>
+	+	ADD(ESP, 8)        //add esp, 8
+	+	PUSH([Filler(2)])  //push dword ptr [serverAddr]
+	+	SUB(ESP, 4)        //sub esp, 4
+	+	CALL(Filler(3))    //call <StringPusher>
+	+	JMP(Filler(4))     //jmp <retnAddr> -> after original CALL LuaFnNamePusher
+	+	ALL00              //<-serverAddr
+	;
+	const allocSize = code.byteCount();
+
+	$$(_, 6.2, `Prepare the arguments for auto-hook`)
+	let args =
+	{
+		allocSize,
+		localVals : {
+			2 : allocSize - 4 //serverAddr
+		},
+		targets : {
+			1 : Exe.GetTgtAddr(mainInject + 1), //LuaFnNamePusher
+		    3 : strPushFunc,                    //StringPusher
+		    4 : Exe.Phy2Vir(mainInject + 5, CODE) //retnAddr
+		}
+	};
+
+	$$(_, 6.3, `Add our code and jump to it from mainInject`)
+	AutoHook(mainInject, code, args);
+
+	$$(_, 7.1, `Construct code for calling the iteminfo loader upon server select`)
+	code =
+		ALL00                 // ; serverAddr
+	+	(directCALL
+	?
+		CALL(Filler(1))       //call <StringAllocator> - This function also does stack restore but the servername argument is not wiped off the stack
+	:                         //   OR
+		CALL([Filler(1)])     //call dword ptr [StringAllocator] - This function also does stack restore but the servername argument is not wiped off the stack
+	)
+	+	MOV(EAX, [ESP, -4])   //mov eax, dword ptr [esp-4]
+	+	CMP(EAX, [Filler(5)]) //cmp eax, dword ptr [serverAddr] ; need to improve this - better would be to do strcmp on the string addresses
+	+	JE(Filler(4))         //je <retnAddr> ; to after original function call
+	+	MOV([Filler(5)], EAX) //mov dword ptr [serverAddr], EAX
+	+	refMOV                //mov ecx, dword ptr [refAddr]
+	+	CALL(Filler(2))       //call <iiLoaderFunc>
+	+	refMOV                //mov ecx, dword ptr [refAddr] ;You can also add checking before this
+	+	iiPush                //push <iiAddr>
+	+	CALL(Filler(3))       //call <iiCopierFunc>
+	+	JMP(Filler(4))        //jmp <retnAddr> ; to after original function call
+	;
+
+	$$(_, 7.2, `Prepare the arguments for auto-hook`)
+	args =
+	{
+		localVals : {
+			5 : 0 //serverAddr
+		},
+		values : directCALL ? null : {
+			1 : Exe.GetUint32(allocInject + 2)
+		},
+		targets : {
+			1 : directCALL ? Exe.GetTgtAddr(allocInject + 1) : null,
+			2 : iiLoaderFunc,
+		    3 : iiCopierFunc,
+		    4 : Exe.Phy2Vir(allocInject + 5, CODE)
+		},
+		jcOffset : 4, //function starts after serverAddr
+		nops : directCALL ? 0 : 1  //Add 1 NOP for indirect CALL since it will have 6 bytes
+	};
+
+	$$(_, 7.3, `Add our code and jump to it from allocInject`)
+	AutoHook(allocInject, code, args);
+
+	return true;
+};
+
+///
+/// \brief Disable for clients not using iteminfo
+///
+ItemInfoPerServer.validate = function()
+{
+	this.StrAddr = Exe.FindText("ItemInfo file Init");
+    return (this.StrAddr > 0);
+};

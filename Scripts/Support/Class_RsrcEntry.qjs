@@ -1,0 +1,100 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2021-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2021-04-04                                             *
+*   Last Modified : 2024-08-07                                             *
+*                                                                          *
+\**************************************************************************/
+
+if (typeof RsrcEntry === 'undefined') //avoid redefinition
+{
+	///
+	/// \brief Class representing a Resource Directory Entry in the Exe.
+	///
+	RsrcEntry = class
+	{
+		constructor(id, rootAddr, offset = 0, isFile = false)
+		{
+			this.ID = id;
+			this.Addr = rootAddr + offset;
+			this.IsFile = (isFile === true);
+
+			if (this.IsFile)
+			{
+				this.DataAddr = Exe.Rva2Phy(Exe.GetInt32(this.Addr));
+				this.DataSize = Exe.GetInt32(this.Addr + 4);
+			}
+			else
+			{
+				this.Entries = [];
+
+				const count = Exe.GetUint16(this.Addr + 12) + Exe.GetUint16(this.Addr + 14);
+				let pos = this.Addr + 16;
+				for (let i = 0; i < count; i++, pos += 8)
+				{
+					id = Exe.GetUint32(pos);
+					offset = Exe.GetInt32(pos + 4);
+					this.Entries[i] = new RsrcEntry(id, rootAddr, offset & 0x7FFFFFFF, offset >= 0);
+					this.Entries[i].Pos = pos;
+				}
+			}
+		}
+
+		traverse(id, ...rest)
+		{
+			if (!this.IsFile)
+			{
+				const entry = this.Entries.find(e => e.ID === id);
+				if (entry != undefined)
+				{
+					if (rest.length > 0)
+						return entry.traverse(...rest);
+					else
+						return entry;
+				}
+			}
+			return false;
+		}
+		
+		dump(prefix = '')
+		{
+			console.info(prefix, "ID = ", this.ID, ", Addr =", this.Addr.toHex(true));
+			
+			if (this.IsFile)
+			{
+				console.info(prefix, "DataAddr =", this.DataAddr.toHex(true), ", DataSize = ", this.DataSize);
+			}
+			else
+			{
+				console.info(prefix, "Entry count = ", this.Entries.length);
+				
+				prefix += "\t";
+				for (const e of this.Entries)
+				{
+					console.info(prefix, "- Pos =", e.Pos.toHex(true));
+					e.dump(prefix + "  ");
+				}
+			}
+		}
+	};
+}

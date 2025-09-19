@@ -1,0 +1,163 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020 Functor                                             *
+*   Copyright (C) 2020-2024 Neo Mind                                       *
+*   Copyright (C) 2018-2024 CH.C (jchcc)                                   *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Functor, Neo-Mind, CH.C (jchcc)                        *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief NOP out codes for disabling the CGameMode::m_lastLockOnPcGid assignment to ignore shift right click.
+///        The assignment occurs inside CGameMode::ProcessPcPick function.
+///
+NoAutoFollow = function(_)
+{
+	$$(_, 1.1, `Ensure that 'Restore Auto Follow' patch is not selected (unless in test mode)`)
+	if (!Warp.TestMode)
+		Warp.SetPatchState('RestoreAutoFollow', false);
+
+	$$(_, 1.2, `Find the m_lastLockOnPcGid assignment (matches multiple locations)`)
+	let prefix =
+		PUSH_1               //push 1
+	+	PUSH(' [00011..0]')  //push 1Ah / push 1Ch
+	+	(Exe.Version < 14
+	?
+		MOV(ECX, ESI)        //mov ecx, esi
+	:
+		""
+	)
+	+	(Exe.Version === 9 || Exe.Version === 10
+	?
+		CALL(R32)            //call regA
+	:
+		CALL([R32, WCp])     //call dword ptr [regA + dispA]
+	);
+
+	const reg = Exe.Version < 9 ? R32 : EAX;
+	if (Exe.BuildDate > 20220000)
+	{
+		prefix +=
+			MOV(reg, [R32])        //mov regD, dword ptr [regC] ;  regD is eax but let's use the variable for now
+		+	MOV(ECX, R32)          //mov ecx, regC
+		+	CALL([reg, POS2WC])    //call dword ptr [regD + dispD]
+		;
+	}
+	else
+	{
+		prefix +=
+			MOV(reg, [R32, POS2WC]) //mov regD, dword ptr [regC + dispC]  ; regD is eax for VC9+
+		;
+	}
+	const suffix =
+		MOV([POS4WC], reg)      //mov dword ptr [CGameMode::m_lastLockOnPcGid], regD
+	;
+
+	const addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0)
+		throw Error("No matches found for assignment");
+
+	$$(_, 2, `NOP out the assignment`)
+	const ins = Instr.FromAddr(addr + prefix.byteCount());
+	Exe.SetNOPs(ins.Addr, ins.Size);
+
+	return true;
+};
+
+///
+/// \brief Decrease the limit value used for comparison against lastFollowTime
+///
+DecrAFDelay = function(_)
+{
+	$$(_, 1.1, `Find the delay comparisons`)
+	const reg = Exe.Version > 6 ? EDI : EBX;
+	const code =
+		CALL(reg)           //call edi / call ebx           ; [<&WINMM.timeGetTime>]
+	+	SUB(EAX, [POS4WC])  //sub eax, dword ptr [offset#1] ; lastFollowTime
+	+	CMP(EAX, 0x3E8)     //cmp eax, 3E8h                 ; 1000ms
+	;
+
+	const addrs = Exe.FindHexN(code);
+	if (addrs.isEmpty())
+		throw Error("No delay comparisons found");
+
+	$$(_, 1.2, `Find the register movement before it to find the correct match`)
+	const movReg = MOV(reg, [POS3WC]); //mov regA, dword ptr [<&WINMM.timeGetTime>] ; regA is edi / ebx
+	const addr = addrs.find( memAddr =>
+		Exe.FindLastHex(movReg, memAddr, memAddr - 0x20) > 0
+	);
+	if (!addr)
+		throw Error("No matches found");
+
+	$$(_, 2.1, `Get the new value from the user`)
+	const varName = '$followDelay';
+	const newDelay = Exe.GetUserInput(varName, D_Uint32, "Delay Value", "Enter the new autofollow delay", 1000, {max: 1000});
+	if (newDelay === false)
+		Cancel("Delay", 1000);
+
+	$$(_, 2.2, `Replace the old value`)
+	Exe.SetFromVar(addr + code.byteCount() - 4, varName);
+
+	return true;
+};
+
+///
+/// \brief Change the limit value used for comparison against lastDisappearTime
+///
+CustomAFStopDelay = function(_)
+{
+	$$(_, 1.1, `Ensure 'No Auto follow' patch is not selected (unless in test mode)`)
+	if (!Warp.TestMode)
+		Warp.SetPatchState('NoAutoFollow', false);
+
+	$$(_, 1.2, `Find the delay comparisons`)
+	const code =
+		CALL(ESI)           //call esi                      ; [<&WINMM.timeGetTime>]
+	+	SUB(EAX, [POS4WC])  //sub eax, dword ptr [offset#1] ; lastDisappearTime
+	+	CMP(EAX, 0x2710)    //cmp eax, 2710h                ; 10000ms
+	;
+
+	const addrs = Exe.FindHexN(code);
+	if (addrs.isEmpty())
+		throw Error("No delay comparisons found");
+
+	$$(_, 1.3, `Find the register movement before it to find the correct match`)
+	const movReg = MOV(ESI, [POS3WC]); //mov esi, dword ptr [<&WINMM.timeGetTime>]
+	const addr = addrs.find( memAddr =>
+		Exe.FindLastHex(movReg, memAddr, memAddr - 0x20) > 0
+	);
+	if (!addr)
+		throw Error("No matches found");
+
+	$$(_, 2.1, `Get the new value from the user`)
+	const varName = '$followStopDelay';
+	const newDelay = Exe.GetUserInput(varName, D_Uint32, "Delay Value", "Enter the new autofollow stop delay", 10000);
+	if (newDelay === false)
+		Cancel("Stop Delay", 10000);
+
+	$$(_, 2.2, `Replace the old value`)
+	Exe.SetFromVar(addr + code.byteCount() - 4, varName);
+
+	return true;
+};

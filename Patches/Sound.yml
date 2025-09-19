@@ -1,0 +1,57 @@
+############################################################################
+#                                                                          #
+#   Copyright (C) ?-2023 *Various authors*                                 #
+#                                                                          #
+#   This file is a part of WARP project (specific to RO clients)           #
+#                                                                          #
+#   WARP is free software: you can redistribute it and/or modify           #
+#   it under the terms of the GNU General Public License as published by   #
+#   the Free Software Foundation, either version 3 of the License, or      #
+#   (at your option) any later version.                                    #
+#                                                                          #
+#   This program is distributed in the hope that it will be useful,        #
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of         #
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          #
+#   GNU General Public License for more details.                           #
+#                                                                          #
+#   You should have received a copy of the GNU General Public License      #
+#   along with this program.  If not, see <http://www.gnu.org/licenses/>.  #
+#                                                                          #
+#                                                                          #
+############################################################################
+#                                                                          #
+#   Author(s)     : Neo-Mind                                               #
+#   Created Date  : 2020-08-26                                             #
+#   Last Modified : 2022-09-07                                             #
+#                                                                          #
+############################################################################
+
+
+CustomSound:
+    title : SOUND CUSTOMIZATION
+    mutex : false
+    
+    patches:
+        - Enable44kHzAudio:
+            title : Enable 44.1 kHz audio sampling frequency
+            recommend : no
+            author : CH.C (jchcc)
+            desc : Boosts the audio sampling frequency to 44.1 kHz, improving the audio quality in the game.
+        
+        - AutoMute:
+            title : Auto mute audio [Experimental]
+            recommend : no
+            author : CH.C (jchcc)
+            desc : Auto mute audio when game window is not active.
+        
+        - NoBGMAudio:
+            title : Disable BGM audio
+            recommend : no
+            author : Andrei Karas (4144) , X-EcutiOnner
+            desc : Disable the use of mp3NameTable.txt to pick & play audio files as BGM.
+
+        - RestoreSongsEffect:
+            title : Restore songs effect
+            recommend : no
+            author : CH.C (jchcc)
+            desc : Restore ground effects of Bard/Dancer songs on latest clients.

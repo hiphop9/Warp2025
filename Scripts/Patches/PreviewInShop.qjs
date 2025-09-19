@@ -1,0 +1,316 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind, Andrei (4144)                                *
+*   Created Date  : 2022-09-24                                             *
+*   Last Modified : 2024-08-30                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Update the function handling ZC_ACK_SCHEDULER_CASHITEM packet to incorporate the location & view sprite fields
+///
+PreviewInShop = function(_)
+{
+	if (Exe.BuildDate >= 20240000) {
+	  const pat2 = "8D 8D F8 FD FF FF 66 89 85 5C FE FF FF E8 ?? ?? ?? ?? 6A 00";
+	  const hook2 = Exe.FindHex(pat2);
+	  if (hook2 < 0) throw Error("패턴2 없음");
+
+	  const mov2 = Exe.FindHex("66 89 85 5C FE FF FF", hook2, hook2 + pat2.byteCount());
+	  if (mov2 < 0) throw Error("패턴2 mov 없음");
+	  const ret2 = mov2;
+
+	  const parts2 = [
+		  "8D 8D F8 FD FF FF"      // lea ecx,[ebp-208]
+		+ " 50"                    // push eax
+		+ " 57"                    // push edi
+		+ " 6B FF 0E"              // imul edi,edi,0E
+		+ " 83 C7 08"              // add edi,08
+		+ " 03 FB"                 // add edi,ebx
+		+ " 0F B7 47 08"           // movzx eax,[edi+08] ; viewSprite
+		+ " 89 85 68 FE FF FF"     // mov   [ebp-198],eax
+		+ " 8B 47 0A"              // mov   eax,[edi+0A] ; location
+		+ " 89 85 00 FE FF FF"     // mov   [ebp-200],eax
+		+ " 5F"                    // pop edi
+		+ " 58"                    // pop eax
+		+ " E9" + Filler(1)        // **슬롯 1**: ret2
+	  ];
+	  AutoHook(hook2, parts2, {
+		targets: { 1: Exe.Phy2Vir(ret2, CODE) },
+		nops: 0
+	  });
+
+	  const pat1 = "8B 44 FB 08 8D 8D F8 FD FF FF 8B 74 FB 0C 89 85 F4 FD FF FF E8 ?? ?? ?? ??";
+	  const hook1 = Exe.FindHex(pat1);
+	  if (hook1 < 0) throw Error("패턴1 없음");
+
+	  const mov1 = Exe.FindHex("89 85 F4 FD FF FF", hook1, hook1 + pat1.byteCount());
+	  if (mov1 < 0) throw Error("패턴1 mov 없음");
+	  const ret1 = mov1;
+
+	  const parts1 = [
+		  "57 6B FF 0E 83 C7 08 03 FB 8B 07 5F"
+		+ " 8D 8D F8 FD FF FF 57 6B FF 0E 83 C7 0C 03 FB 8B 37 5F"
+		+ " E9" + Filler(1)         // **슬롯 1**: ret1
+	  ];
+	  AutoHook(hook1, parts1, {
+		targets: { 1: Exe.Phy2Vir(ret1, CODE) },
+		nops: 0
+	  });
+
+	  return true;
+	};
+	$$(_, 1.1, `Calculate essential values`)
+	const isNewType = Exe.Version > 11 && (
+		(Exe.BuildDate > 20191220 && (ROC.IsZero || ROC.IsRenewal)) || 
+		(Exe.BuildDate > 20200720)
+	); //Newer function format for latest clients
+	
+	const srcLoc = isNewType  && ROC.FullVer != 14.29 ? [POS4WC] : [R32, ' [000001.0]']; //displacement is 6 or 4 . Source Location is direct memory address for newer clients
+
+	$$(_, 1.2, `Find the location inside the function handling the packet where we need to place the JMP`)
+	let code =
+		LEA(ECX, [EBP, NEG2WC])     //lea ecx, [LOCAL.x] ; iteminfo location
+	+	CALL(ALLWC)                 //call func
+	+	MOVSX(EAX, srcLoc)          //movsx eax, word ptr [<srcLoc>]
+	+	(Exe.Version === 11
+	?
+		MOV([EBP, NEG2WC], EAX)     //mov dword ptr [LOCAL.y], eax
+	:
+		''
+	)
+	+	CMP(EAX, ' [000010..]')     //cmp eax, 8 or 0Ah
+	+	JA(ROC.FullVer == 14.29 ? POS2WC : WCp)                     //ja short _skip
+	;
+
+	const hookAddr = Exe.FindHex(code);
+	if (hookAddr < 0)
+		throw Error("Hook pattern missing");
+
+	$$(_, 1.2, `Extract the original instruction at the hook address & the displacement`)
+	const leaIns = Instr.FromAddr(hookAddr);
+	const iiOffset = leaIns.Disp;
+
+	$$(_, 1.3, `Next find the block size addition after it`)
+	let parts =
+	[
+		ADD(R32, WCp)               //add regA, immA ; block size addition
+	,
+		MOVSX(EAX, srcLoc)          //movsx eax, word ptr [<srcLoc>] ; different from earlier code but same pattern
+	,
+		INC(R32)                    //inc regB ; loop increment
+	];
+
+	let prefix, suffix;
+	if (ROC.FullVer == 14.29) //VC14.29 we just need the end of the loop directly
+	{
+		prefix = '';
+		suffix = 
+			parts[1]
+		+	parts[2]
+		+	CMP(EDI, EAX)
+		+	JL(NEG2WC)
+		;
+	}
+	else if (isNewType) //VC14.16 newer
+	{
+		prefix = parts[2] + parts[1];
+		suffix = parts[0];
+	}
+	else if (Exe.Version > 11) //VC14.16 older
+	{
+		prefix = '';
+		suffix = parts.join('');
+	}
+	else //VC11
+	{
+		prefix = parts[1] + parts[2];
+		suffix = parts[0];
+	}
+	let addr = Exe.FindHex(prefix + suffix, hookAddr + code.byteCount(), hookAddr + 0x100);
+	if (addr < 0)
+		throw Error("Loop increment missing");
+
+	$$(_, 1.4, `Clear the SendClientFlags patch`)
+	Exe.ClearPatch('SendClientFlags');
+		
+	$$(_, 1.5, `Determine the essential offsets`)
+	const viewOffset = (isNewType || Exe.BuildDate < 20171000) ? 112 : 116; //TODO Check if it is accurate for VC14.29
+	const locOffset = isNewType ? 8 : 4;
+	
+	if (ROC.FullVer == 14.29)
+	{
+		$$(_, 2.1, `Go to the JL address`)
+		addr = Exe.GetTgtAddr(addr + suffix.byteCount() - 4, PHYSICAL);
+
+		$$(_, 2.2, `Pick up the table fetching (usually at the beginning)`)
+		code =
+			MOV(EAX, [8, EDI, EBX, 8])
+		+	leaIns
+		+	MOV(ESI, [8, EDI, EBX, 0xC])
+		;
+		addr = Exe.FindHex(code, addr, addr + 0x50);
+		if (addr < 0)
+			throw Error("Table pickup missing in latest client (VC14.29)");
+
+		let csize = code.byteCount();
+
+		$$(_, 2.3, `Construct the code for the table pick up with increased block size : 8 -> (8 + 4 + 2)`)
+		parts =
+		[//0
+			''
+		,//1
+			LEA(ECX, [4, EDI, EDI])                //lea ecx, [edi*4 + edi]
+		+	LEA(EAX, [EDI, EDI])                   //lea eax, [edi + edi]
+		+	ADD(ECX, EAX)                          //add ecx, eax
+		+	LEA(ECX, [2, ECX, EBX, 0xE])           //lea ecx, [ecx*2 + ebx + 0Eh]
+		,//2
+			MOV(EAX, [ECX])
+		+	MOV(ESI, [ECX, 4])
+		+	leaIns
+		,//3
+			JMP(Filler(1))                         //jmp retnAddr ; after the original LEA
+		];
+
+		$$(_, 2.4, `Prepare the arguments for auto-hook`)
+		const args =
+		{
+			targets : {
+				1 : Exe.Phy2Vir(addr + csize, CODE)
+			},
+			nops : csize - 5
+		};
+		
+		$$(_, 2.5, `Add our code & jump to it from the table fetch address`)
+		AutoHook(addr, parts, args);
+
+		$$(_, 2.6, `Update the parts for the assignment code`)
+		parts[0] =
+			leaIns                                 //lea ecx, [ebp + <iiOffset>]
+		+	PUSH_EAX                               //push eax
+		+	PUSH(ECX)                              //push ecx
+		;
+
+		parts[2] =
+			MOVZX(EAX, [ECX, 0x8])                 //movzx eax, dword ptr [ecx + 8]
+		+	MOV([EBP, iiOffset + viewOffset], EAX) //mov dword ptr [ebp + <iiOffset> + <viewOffset>], eax
+		+	MOV(EAX, [ECX, 0xA])                   //mov eax, dword ptr [ecx + 0Ah]
+		+	MOV([EBP, iiOffset + locOffset], EAX)  //mov dword ptr [ebp + <iiOffset> + <locOffset>], eax
+		+	POP(ECX)                               //pop ecx
+		+	POP_EAX                                //pop eax
+		;
+	}
+	else
+	{
+		$$(_, 3.1, `Extract the addition instruction & the block size value (immediate argument)`)
+		const sizeAdd = Instr.FromAddr(addr + prefix.byteCount());
+		const blockSize = sizeAdd.Immd;
+		
+		$$(_, 3.2, `Setup the register to be used with the block size`)
+		const blockReg = isNewType ? ECX : sizeAdd.MRM.getReg('M');
+		
+		$$(_, 3.3, `Construct the function code in parts which varies based on isNewType`)
+		parts =
+		[//0
+			leaIns          //lea ecx, [ebp + <iiOffset>]
+		+	PUSH_EAX        //push eax
+	
+		,//1
+			''
+	
+		,//2
+			MOVZX(EAX, [blockReg, blockSize])      //movzx eax, dword ptr [<blockReg> + <blockSize>]
+		+	MOV([EBP, iiOffset + viewOffset], EAX) //mov dword ptr [ebp + <iiOffset> + <viewOffset>], eax
+		+	MOV(EAX, [blockReg, blockSize + 2])    //mov eax, dword ptr [<blockReg> + <blockSize> + 2]
+		+	MOV([EBP, iiOffset + locOffset], EAX)  //mov dword ptr [ebp + <iiOffset> + <locOffset>], eax
+	
+		,//3
+			''
+	
+		,//4
+			POP_EAX         //pop eax
+		+	JMP(Filler(1))  //jmp retnAddr ; after the original LEA
+		];
+		
+		if (isNewType)
+		{
+			$$(_, 3.4, `For newer formats, find the end of the loop (the conditional jump)`)
+			addr = sizeAdd.Addr + suffix.byteCount();
+			code =
+				CMP(R32, R32)  //cmp regA, regB ; loop var < final value
+			+	JL(NEG2WC)     //jl _loop
+			;
+
+			let endAddr = Exe.FindHex(code, addr, addr + 0x30);
+			if (endAddr < 0)
+				throw Error("End of Loop missing");
+
+			endAddr += code.byteCount();
+			
+			$$(_, 3.5, `Goto the JL's target`)
+			addr = Exe.GetTgtAddr(endAddr - 4, PHYSICAL);
+
+			$$(_, 3.6, `Find the assignment to stack location from ECX before it.`)
+			const beginAddr = Exe.FindLastHex(MOV([EBP, NEG2WC], ECX), addr, addr - 0x30);
+			if (beginAddr < 0)
+				throw Error("Starting point missing");
+
+			$$(_, 3.7, `Extract the offset/displacement used in the instruction`)
+			const offset = Exe.GetInt32(beginAddr + 2);
+
+			$$(_, 3.8, `Now fill the gaps`)
+			parts[1] =
+				PUSH(ECX)                //push ecx
+			+	MOV(ECX, [EBP, offset])  //mov ecx, dword ptr [ebp + offset]
+			;
+
+			parts[3] =
+				POP(ECX)                 //pop ecx
+			;
+		}
+
+		$$(_, 3.9, `Update the block size (4 bytes for the location & 2 for viewSprite)`)
+		Exe.SetInt8(sizeAdd.NextAddr - 1, sizeAdd.Immd + 6);
+	}
+
+	$$(_, 4.1, `Prepare the arguments for auto-hook`)
+	const args =
+	{
+		targets : {
+			1 : Exe.Phy2Vir(leaIns.NextAddr, CODE)
+		},
+		nops : 1
+	};
+
+	$$(_, 4.2, ` Add our code & jump to it from hookAddr`)
+	AutoHook(hookAddr, parts, args);
+
+	return true;
+};
+
+///
+NpcDialogueScrolling.validate = () => Exe.BuildDate >= 20240713;
+
+// 선택적으로 별칭
+EnableNpcDialogueScrolling = NpcDialogueScrolling;

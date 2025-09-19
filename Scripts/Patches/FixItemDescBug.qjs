@@ -1,0 +1,48 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 CH.C (jchcc)                                   *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : CH.C (jchcc)                                           *
+*   Created Date  : 2020-11-22                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Enforce the JMP after comparison with '[' to Fix Item Description Bug
+///
+FixItemDescBug = function(_)
+{
+	$$(_, 1, `Find the pattern`)
+	const code =
+		CMP(BYTE_PTR, [ESI], 0x5B)	//cmp byte ptr [ESI], 5Bh
+	+	JNE(0x31)					//jne short _skip
+	;
+
+	const addr = Exe.FindHex(code);/// 1 - Enforce the jump
+	if (addr < 0)
+		Cancel("Client does not have the bug");
+
+	$$(_, 2, `Enforce the JNE`)
+	Exe.SetJMP(addr + code.byteCount() - 2);
+
+    return true;
+};

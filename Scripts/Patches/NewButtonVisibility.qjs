@@ -1,0 +1,550 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2018-2023 CH.C (jchcc)                                   *
+*   Copyright (C) 2021-2023 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : CH.C (jchcc), Neo-Mind                                 *
+*   Created Date  : 2021-01-14                                             *
+*   Last Modified : 2023-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Modify the switch case for displaying the various buttons to display/hide the ones we selected
+///        inside UINewBasicWnd::UINewBasicWnd function
+///
+NewButtonVis = function(_)
+{
+	if ( !CACHE.has('NBV_Refs') )
+	{
+		$$(_, 1.1, `Find the string 'status_doram'`)
+		let addr = Exe.FindText("status_doram");
+		if (addr < 0)
+			throw Error("Reference string missing");
+
+		$$(_, 1.2, `Find where it is PUSHed along with its length (12 characters)`)
+		const refAddr = Exe.FindHex(PUSH(0xC) + PUSH(addr));
+		if (refAddr < 0)
+			throw Error("Reference string not PUSHed");
+
+		$$(_, 1.3, `Find the start of the function`)
+		let code =
+			FP_START     //push ebp
+			             //mov ebp, esp
+		+	PUSH(-1)     //push -1
+		+	PUSH(POS3WC) //push offset#1
+		;
+
+		const beginAddr = Exe.FindLastHex(code, refAddr, refAddr - 0x800);
+		if (beginAddr < 0)
+			throw Error("Function start missing");
+
+		$$(_, 1.4, `Find all the ID assignments & string PUSHes (they will be in same order)`)
+		let idAssigners, strPushers;
+		if (Exe.Version === 11)
+		{
+			idAssigners = Exe.FindHexN(MOV([EBP, WCn], POS2WC), beginAddr, beginAddr + 0x100);  //mov dword ptr [LOCAL.x], <ID>
+			strPushers = Exe.FindHexN(PUSH(POS4WC) + " 8D [..001101]", beginAddr, refAddr);     //push offset#2
+			                                                                                    //lea ecx, [LOCAL.y]
+		}
+		else
+		{
+			idAssigners = [
+				...Exe.FindHexN(MOVAPS(XMM0, [POS4WC]), beginAddr, beginAddr + 0x100),          //movaps xmm0, dqword ptr [memaddr]
+				...Exe.FindHexN(MOV([EBP, NEG2WC], POS2WC), beginAddr, beginAddr + 0xE0)        //mov dword ptr [LOCAL.x], <ID>
+			].sort();
+
+			strPushers = [
+				...Exe.FindHexN(PUSH(POS4WC) + " 0F 28", beginAddr, beginAddr + 0x100),         //push offset#1; followed by MOVAPS XMM0, DQword ptr [memaddr]
+				...Exe.FindHexN(PUSH(POS4WC) + " C7 [..000101]", beginAddr, refAddr),           //push offset#1; followed by MOV dword ptr
+				...Exe.FindHexN(PUSH(POS4WC) + " 8D [10...101]", beginAddr, refAddr)            //push offset#1; followed by LEA reg32, [LOCAL.x]
+			].sort();
+		}
+
+		if (idAssigners.isEmpty())
+			throw Error("ID assignments missing");
+
+		if (strPushers.isEmpty())
+			throw Error("String PUSHes missing");
+
+		$$(_, 1.5, `Extract the ID values`)
+		let idList = [];
+		for (const addr of idAssigners)
+		{
+			const ins = Instr.FromAddr(addr);
+			if (ins.Codes[0] === 0x0F) //MOVAPS
+			{
+				let phy = Exe.Vir2Phy(ins.Disp);
+				idList.push(Exe.GetInt32(phy      ));
+				idList.push(Exe.GetInt32(phy + 0x4));
+				idList.push(Exe.GetInt32(phy + 0x8));
+				idList.push(Exe.GetInt32(phy + 0xC));
+			}
+			else if (ins.Immd > 0x80) //only valid IDs
+			{
+				idList.push(ins.Immd);
+			}
+		}
+
+		if (idList.length !== strPushers.length)
+			throw Error("Either String or ID missing");
+
+		$$(_, 1.6, `Map & assign the IDs based on the strings PUSHed`)
+		let IDMap = new Map();
+
+		strPushers.forEach( (addr, idx) =>
+		{
+			const key = Exe.GetText(Exe.Vir2Phy(Exe.GetInt32(addr + 1))); //the string being pushed.
+			const name = this.Data.get(key);
+
+			IDMap.set(name, idList[idx]);
+		});
+
+		$$(_, 2.1, `Find the Jump table used for switch`)
+		let prefix = MOVZX(EAX, BYTE_PTR, [EAX, POS4WC]); //movzx eax, byte ptr [eax + switchTbl]
+		let suffix = JMP([4, EAX, POS4WC]);               //jmp dword ptr [eax*4 + jumpTbl]
+
+		addr = Exe.FindHex(prefix + suffix, refAddr + 5, refAddr + 0x60);
+		if (addr > 0)
+		{
+			$$(_, 2.2, `If found then set the type to 1`)
+			const Type = 1;
+
+			$$(_, 2.3, `Save the VIRTUAL location (serves as the returning address)`)
+			const RetnAddr = Exe.Phy2Vir(addr, CODE);
+
+			$$(_, 2.4, `Extract the switchTbl address`)
+			const jmpDpAddr = addr + prefix.byteCount();
+			const switchTbl = Exe.Vir2Phy(Exe.GetInt32(jmpDpAddr - 4), CODE);
+
+			$$(_, 2.5, `Calculate the addresses for Hidden (OFF) & Visible (ON) states`)
+			const OffAddr = CaseAddr(0, VIRTUAL, addr, jmpDpAddr);
+			const OnAddr  = CaseAddr(1, VIRTUAL, addr, jmpDpAddr);
+
+			$$(_, 2.6, `Now find the limiting comparison before the switch table`)
+			prefix = LEA(EAX, [EBX, NEG2WC]); //lea eax, [ebx - limitL]
+			suffix = CMP(EAX, POS1WC);        //cmp eax, range
+			let IDReg = EBX;
+
+			let addr2 = Exe.FindLastHex(prefix + suffix, addr, addr - 0x30);
+			if (addr2 < 0)
+			{
+				prefix = ADD(EAX, NEG2WC);    //add eax, -limitL
+				addr2 = Exe.FindLastHex(prefix + suffix, addr, addr - 0x30);
+				IDReg = EAX;
+			}
+
+			if (addr2 < 0)
+				throw Error("Limiting comparison missing");
+
+			$$(_, 2.7, `Save it as our hook address`)
+			const HookAddr = addr2;
+
+			$$(_, 2.8, `Extract the limits`)
+			addr2 += prefix.byteCount();
+			const MinLimit = -Exe.GetInt32(addr2 - 4);
+			const Range = Exe.GetInt32(addr2 + 1);
+
+			$$(_, 2.9, `Isolate the visible & hidden button names. Also save the table address (PHYSICAL) when applicable for each button`)
+			let Visible = [];
+			let Hidden = [];
+			let TblAddrs = new Map();
+
+			for (const [key, id] of IDMap)
+			{
+				if (id < MinLimit || id > (MinLimit + Range))
+				{
+					Visible.push(key);
+				}
+				else
+				{
+					const tblAddr = switchTbl + id - MinLimit;
+					TblAddrs.set(key, tblAddr);
+
+					const visible = (Exe.GetInt8(tblAddr) === 1);
+					if (visible)
+						Visible.push(key);
+					else
+						Hidden.push(key);
+				}
+			}
+
+			$$(_, 2.10, `Put everything in the CACHE`)
+			CACHE.put('NBV_Refs', {
+				IDMap,
+				Type,
+				HookAddr,
+				RetnAddr,
+				OffAddr,
+				OnAddr,
+				IDReg,
+				TblAddrs,
+				Visible,
+				Hidden,
+				MinLimit,
+				Range
+			});
+		}
+		else
+		{
+			$$(_, 3.1, `Since table is not there set the type. The switch gets implemented with direct comparisons`)
+			const Type = 2;
+
+			$$(_, 3.2, `Find the comparisons`)
+			prefix =
+				CMP(EBX, POS2WC) //CMP EBX, 164 or 162
+			;
+			suffix =
+				JE(POS2WC)       //je <offAddr>
+			+	CMP(EBX, POS2WC) //cmp ebx, 208h / 204h
+			+	JLE(0xC)         //jle short <onAddr>
+			+	CMP(EBX, POS2WC) //cmp ebx, 20Ah / 206h
+			+	JLE(POS2WC)      //jle <offAddr>
+			;
+			let IDReg = EBX;
+
+			let OffIDs;
+			addr = Exe.FindHex(prefix + suffix, refAddr + 5, refAddr + 0x60);
+			if (addr > 0)
+			{
+				const first = Exe.GetInt32(addr + 2);
+				const third = Exe.GetInt32(addr + prefix.byteCount() + suffix.byteCount() - 10);
+				OffIDs = [first, third - 1, third];
+			}
+			else
+			{
+				suffix =
+					JE(POS2WC)       //je <offAddr>
+				+	CMP(EBX, POS2WC) //cmp ebx, 1F3h / 205h
+				+	JE(POS2WC)       //je <offAddr>
+				;
+
+				addr = Exe.FindHex(prefix + suffix, refAddr + 5, refAddr + 0x60);
+				if (addr > 0)
+				{
+					const first = Exe.GetInt32(addr + 2);
+					const second = Exe.GetInt32(addr + prefix.byteCount() + 8); //6 for the JE
+					OffIDs = [first, second];
+				}
+			}
+			if (addr < 0)
+			{
+				prefix =
+					SUB(EAX, POS2WC) //SUB EAX, 16C or 16B or 1E9
+				;
+				const subber = Exe.BuildDate > 20220000 ? 0x3B : 0x30;
+				suffix =
+					JZ(POS2WC)       //jz offAddr
+				+	SUB(EAX, 0x8B)   //sub eax, 8Bh
+				+	JZ(POS2WC)       //jz offAddr
+				+	SUB(EAX, subber) //sub eax, 30h or 3Bh
+				+	JZ(POS2WC)       //jz offAddr
+				;
+				IDReg = EAX;
+
+				addr = Exe.FindHex(prefix + suffix, refAddr + 5, refAddr + 0x60);
+				if (addr > 0)
+				{
+					const first = Exe.GetInt32(addr + 1);
+					OffIDs = [first, first + 0x8B, first + 0x8B + subber];
+				}
+			}
+			if (addr < 0)
+			{
+				suffix =
+					JZ(POS2WC)       //jz <offAddr>
+				+	SUB(EAX, 7)      //sub eax, 7
+				+	JZ(POS2WC)       //jz <offAddr>
+				;
+
+				addr = Exe.FindHex(prefix + suffix, refAddr + 5, refAddr + 0x60);
+				if (addr > 0)
+				{
+					const first = Exe.GetInt32(addr + 1);
+					OffIDs = [first, first + 7];
+				}
+			}
+			if (addr < 0)
+				throw Error("Switch case missing");
+
+			$$(_, 3.3, `Save the location as our hook address`)
+			const HookAddr = addr;
+
+			$$(_, 3.4, `Calculate the addresses for Hidden (OFF) & Visible (ON) states`)
+			addr += prefix.byteCount();
+			const OffAddr = Exe.GetTgtAddr(addr + 2);
+
+			addr += suffix.byteCount();
+			const OnAddr = Exe.Phy2Vir(addr, CODE);
+			const RetnAddr = OnAddr; //also serves as the return address.
+
+			$$(_, 3.5, `Isolate the visible & hidden button names`)
+			let Visible = [];
+			let Hidden = [];
+
+			for (const [key, id] of IDMap)
+			{
+				if (OffIDs.includes(id))
+					Hidden.push(key);
+				else
+					Visible.push(key);
+			}
+
+			$$(_, 3.6, `Put everything in the CACHE`)
+			CACHE.put('NBV_Refs', {
+				IDMap,
+				Type,
+				HookAddr,
+				RetnAddr,
+				OffAddr,
+				OnAddr,
+				OffIDs,
+				IDReg,
+				Visible,
+				Hidden
+			});
+		}
+	}
+
+	$$(_, 4.1, `Setup values based on patchName`)
+	let varName, title, suffix, btnChoices;
+
+	const Refs = CACHE.get('NBV_Refs');
+	if (_ === 'HideNewButtons')
+	{
+		varName = '$newHiddenButtons';
+		title = "Hide Buttons";
+		suffix = "hidden";
+		btnChoices = Refs.Visible;
+	}
+	else //Show New Buttons
+	{
+		varName = '$newShownButtons';
+		title = "Show Buttons";
+		suffix = "shown";
+		btnChoices = Refs.Hidden;
+	}
+
+	$$(_, 4.2, `Retrieve the user's selection`)
+	const selection = Exe.GetUserInput(varName, D_MultiChoice, title, "Choose the buttons to be " + suffix, [], {choices: btnChoices});
+	if (selection === false || selection.isEmpty())
+		Cancel("No new buttons are " + suffix);
+
+	$$(_, 4.3, `Save the selection`)
+	CACHE.put('Selection:' + _, selection);
+
+	$$(_, 4.4, `Call the helper to stage the changes`)
+	CACHE.addUser('NBV', _);
+
+	this.stage(_);
+
+	return true;
+};
+
+///
+/// \brief Supporting function to stage the changes for the specified patch
+///
+NewButtonVis.stage = function(patchName)
+{
+	const _ = `${patchName}.stage : `;
+
+	$$(_, 1.1, `Begin the common tag`)
+	Exe.BeginTag(CACHE.getTag('NBV'), true);
+
+	$$(_, 1.2, `Prepare the array to store IDs of newly visible buttons (Used for Type 2)`)
+	let onIDs = [];
+
+	$$(_, 1.3, `Retrieve the stored reference db`)
+	const Refs = CACHE.get('NBV_Refs');
+
+	const {Type, IDMap, IDReg, TblAddr} = Refs;
+
+	$$(_, 2.2, `Iterate through the current selection and change the value in table or add corresponding JE to code`)
+	const index = this.Members.indexOf(patchName);
+	let selection = CACHE.get('Selection:' + patchName);
+
+	let prefix = '';
+	for (const key of selection)
+	{
+		if (TblAddr && TblAddr.has(key))
+		{
+			Exe.SetInt8(TblAddr.get(key), index);
+		}
+		else
+		{
+			const id = IDMap.get(key);
+			prefix +=
+				CMP(IDReg, id) //cmp regA, ID
+			+	JE(Filler(1))  //je <onAddr> / je <offAddr>
+			;
+
+			if (index === 1 && Type === 2)
+				onIDs.push(id);
+		}
+	}
+
+	$$(_, 2.3, `Repeat the process for the other selection`)
+	const otherIndex = 1 - index;
+	const otherPatch = this.Members[otherIndex];
+	selection = CACHE.get('Selection:' + otherPatch);
+
+	let suffix = '';
+	if (selection)
+	{
+		for (const key of selection)
+		{
+			if (TblAddr && TblAddr.has(key))
+			{
+				Exe.SetInt8(TblAddr.get(key), otherIndex);
+			}
+			else
+			{
+				const id = IDMap.get(key);
+				suffix +=
+					CMP(IDReg, id) //cmp regA, ID
+				+	JE(Filler(2))  //je <offAddr> / je <onAddr>
+				;
+
+				if (otherIndex === 1 && Type === 2)
+					onIDs.push(id);
+			}
+		}
+	}
+
+	if (prefix.isEmpty() && suffix.isEmpty())
+		return;
+
+	$$(_, 2.4, `Now fill up the rest`)
+	let parts =
+	[
+		prefix
+		,
+		suffix
+	];
+
+	if (Type === 1)
+	{
+		const {MinLimit, Range} = Refs;
+		parts.push(
+			LEA(EAX, [IDReg, -MinLimit]) //lea eax, [regA - minLimit]
+		+	CMP(EAX, Range)              //cmp eax, <range>
+		+	JA(Filler(3))                //ja <onAddr>
+		+	JMP(Filler(4))               //jmp <retnAddr> ; address of the MOVZX
+		);
+	}
+	else
+	{
+		const {OffIDs} = Refs;
+
+		for (const id of OffIDs)
+		{
+			if (onIDs.includes(id))
+				continue;
+
+			parts.push(
+				CMP(IDReg, id)           //cmp regA, ID
+			+	JZ(Filler(3))            //jz <offAddr>
+			);
+		}
+
+		parts.push(
+			JMP(Filler(4))             //jmp <onAddr>
+		);
+	}
+
+	$$(_, 2.5, `Prepare the arguments for auto-hook`)
+	const {OffAddr, OnAddr, HookAddr, RetnAddr} = Refs;
+
+	const args =
+	{
+		targets : {
+			1 : index === 0 ? OffAddr : OnAddr,
+			2 : index === 0 ? OnAddr : OffAddr,
+			3 : Type  === 1 ? OnAddr : OffAddr,
+			4 : RetnAddr
+		}
+	};
+
+	$$(_, 2.6, `Add our code and jump to it from HookAddr`)
+	AutoHook(HookAddr, parts, args);
+};
+
+///
+/// \brief Disable for unsupported clients (uses the "adventurerAgency" string).
+///
+NewButtonVis.validate = () =>
+	Exe.BuildDate > 20170000;
+
+///
+/// \brief Shift the patch data to the other patch when current one is deselected.
+///
+NewButtonVis.cleanup = function(patchName)
+{
+	/// 1 - Delete from UserRegistry & clear the selection
+	CACHE.delUser('NBV', patchName);
+	CACHE.del('Selection:' + patchName);
+
+	/// 2 - Restage the changes without the selections in the other patch if it is present.
+	if (CACHE.hasUsers('NBV'))
+	{
+		patchName = CACHE.firstUser('NBV');
+
+		Exe.SetActivePatch(patchName);
+		this.stage(patchName);
+	}
+};
+
+///
+/// \brief Wrappers for individual patches
+///
+HideNewButtons = NewButtonVis;
+ShowNewButtons = NewButtonVis;
+
+///
+/// \brief Data to be used for the patches
+///
+NewButtonVis.Data = MakeMap(
+	'status'           , "Stats",
+	'equip'            , "Equipment",
+	'item'             , "Inventory",
+	'skill'            , "Skill",
+	'booking'          , "Booking",
+	'party'            , "Party",
+	'guild'            , "Guild",
+	'battle'           , "Battleground",
+	'quest'            , "Quest",
+	'map'              , "WorldMap",
+	'navigation'       , "Navigation",
+	'option'           , "Options",
+	'bank'             , "Bank",
+	'rec'              , "Record",
+	'mail'             , "Rodex (Mail)",
+	'achievement'      , "Achievement",
+	'tip'              , "Tip",
+	'shop'             , "Shop",
+	'keyboard'         , "Shortcut",
+	'sns'              , "Twitter (SNS)",
+	'attendance'       , "Attendance",
+	'adventurerAgency' , "AdventureAgency",
+	'repute'           , "Reputation",
+);
+
+NewButtonVis.Members = ["HideNewButtons", "ShowNewButtons"];

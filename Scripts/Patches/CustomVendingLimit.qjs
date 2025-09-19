@@ -1,0 +1,183 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2014-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Modify the constant used in Comparison inside the vending related function (dont have name for it atm)
+///
+CustomVendingLimit = function(_)
+{
+	$$(_, 1.1, `Find where 1,000,000,000 is PUSHed`)
+	if ( !('Vir' in this) )
+		this.Vir = Exe.Phy2Vir(this.Phy);
+
+	let addr = Exe.FindHex( PUSH(this.Vir) );
+	if (addr < 0)
+		throw Error("'1,000,000,000' not PUSHed");
+
+	$$(_, 1.2, `Find the comparison with 1Billion or 1Billion+1 before the PUSH`)
+	const newStyle = Exe.BuildDate > 20130618;
+	const limiter = (1e9 + (newStyle ? 0 : 1)).toHex(); //1B or 1B+1 in hex
+	let code =
+		limiter  //cmp regA, 3B9ACA00h or 3B9ACA01h ; easier to do without opcode since it changes when regA is EAX
+	+	(newStyle
+	?
+		JLE(WCp) //jle short _proceed
+	:            // or
+		JL(WCp)  //jl short _proceed
+	);
+	addr = Exe.FindHex(code, addr - 0x10, addr);
+	if (addr < 0)
+		throw Error("First Comparison not found");
+
+	$$(_, 1.3, `Add to comparison address set`)
+	let limitAddrs = [addr];
+
+	$$(_, 1.4, `Find the MsgString CALL that gets the 0 zeny message`)
+	code =
+		PUSH_1       //push 1
+	+	PUSH_2       //push 2
+	+	PUSH(0x25C)  //push 25Ch ; Line no. 605
+	;
+	addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("MsgBox CALL not found");
+
+	$$(_, 1.5, `Find the 2nd 1B or 1B+1 comparison before the PUSHes`)
+	code =
+		limiter  //cmp regA, 3B9ACA00h or 3B9ACA01h ; easier to do without opcode since it changes when regA is EAX
+	+	(newStyle
+	?
+		JLE(WCp) //jle short _proceed#2
+	:            // or
+		JGE(WCp) //jge short _limit
+	);
+
+	let addr2 = Exe.FindHex(code, addr - 0x80, addr);
+	if (addr2 < 0 && newStyle)
+	{
+		code = code.replace(JLE(WCp), JBE(WCp));//Recent clients use JBE instead of JLE
+		addr2 = Exe.FindHex(code, addr - 0xC0, addr);
+	}
+	if (addr2 < 0)
+		throw Error("Second Comparison not found");
+
+	$$(_, 1.6, `Add to comparison address set`)
+	limitAddrs.push(addr2);
+
+	if (newStyle)
+	{
+		$$(_, 1.7, `For new style look for the additional comparisons (can range from 0 to 3)`)
+		const code1a = CMP(R32, limiter);
+		const code1b = CMP(EAX, limiter);
+
+		const code2 =
+			PUSH_1      //push 1
+		+	PUSH_2      //push 2
+		+	PUSH(0x9A3) //push 9A3h ; Line no. 2468
+		;
+
+		const code3a = MOV(R32, limiter);
+		const code3b = PUSH(limiter);
+
+		for (const memAddr of Exe.FindHexN(code2))
+		{
+			let addr = Exe.FindLastHex(code1a, memAddr - 9, memAddr - 0x20);
+			let offset = 2;
+			if (addr < 0)
+			{
+				addr = Exe.FindLastHex(code1b, memAddr - 9, memAddr - 0x20);
+				offset = 1;
+			}
+			if (addr > 0)
+			{
+				limitAddrs.push(addr + offset);
+
+				let cnt = 0;
+				addr = Exe.FindHex(code3a, memAddr, memAddr + 0x70);
+				if (addr > 0)
+				{
+					limitAddrs.push(addr + 1);
+					cnt++;
+				}
+				
+				addr = Exe.FindHex(code3b, memAddr, memAddr + 0x70);
+				if (addr > 0)
+				{
+					limitAddrs.push(addr + 1);
+					cnt++;
+				}
+				
+				if (cnt == 0)
+					throw Error("Unable to find the limit assignments");				
+			}
+		}
+	}
+	else
+	{
+		$$(_, 1.8, `Find the 3rd extra comparison for oldstyle clients`)
+		code = code.replace(JGE(WCp), JNE(WCp));//JNE instead of JGE
+		addr = Exe.FindHex(code, addr - 0x60, addr);
+		if (addr < 0)
+			throw Error("Extra Comparison not found");
+
+		$$(_, 1.9, `Change the JNE to JMP`)
+		Exe.SetJMP(addr + 4);
+	}
+
+	$$(_, 2.1, `Get the new limit value from user`)
+	let newLimit = Exe.GetUserInput('$vendingLimit', D_Int32, "Vending Limit", "Enter the new limit", 1e9, {min: 0});
+	if (newLimit === false)
+		Cancel("Vending Limit", 1e9);
+
+	$$(_, 2.2, `Prepare string with commas for the newLimit similar to the original 1B string`)
+	const str = newLimit.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '\0'; //Adding Commas every 3 digits like the original
+
+	$$(_, 2.3, `Change the 1B string`)
+	Exe.SetText(this.Phy, str);
+
+	$$(_, 2.4, `For the old style increment the replaced value (original was also 1B+1)`)
+	if (!newStyle)
+		newLimit++;
+
+	$$(_, 2.5, `Replace the limit at all the comparison locations`)
+	for (const addr of limitAddrs)
+		Exe.SetInt32(addr, newLimit);
+
+	return true;
+};
+
+///
+/// \brief Disable for Old Clients - Only 2013+ Clients have this check
+///
+CustomVendingLimit.validate = function()
+{
+	this.Phy = Exe.FindText("1,000,000,000", PHYSICAL);
+	delete this.Vir;
+
+    return (this.Phy > 0);
+};

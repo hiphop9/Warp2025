@@ -1,0 +1,113 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2024 Shinryo                                           *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo                                                *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change all WS2_32.socket() calls with custom function that sets up TCP_NODELAY
+///
+NoNagle = function(_)
+{
+	$$(_, 1.1, `Find the string 'ws2_32.dll'`)
+	const WS2_32 = Exe.FindText("ws2_32.dll");
+	if (WS2_32 < 0)
+		throw Error("'ws2_32.dll' not found");
+
+	$$(_, 1.2, `Get the essential addresses for our function`)
+	ROC.findImports();
+
+	$$(_, 1.3, `Get the address and references of socket function`)
+	const {funcAddr : WS2_socket, refAddrs} = GetImpRefs("socket", "ws2_32.dll", 23);
+	if (WS2_socket < 0)
+		throw Error("'socket' function not found");
+
+	if (refAddrs == undefined)
+		throw Error("'socket' reference missing");
+
+	$$(_, 2.1, `Construct our function to override with`)
+	const parts =
+	[//0
+		Filler(1)                 //Address to be used in CALL dword ptr and JMP dword ptr replacements
+
+	,//1
+		FP_START                  //push ebp <- Actual start of function
+		                          //mov ebp,esp
+	+	SUB(ESP, 0xC)             //sub esp, 0Ch
+	+	MOV([EBP, -8], 1)         //mov dword ptr [ebp-8], 1
+	+	MOV(EAX, [EBP, 0x10])     //mov eax, dword ptr [ebp+10h] ; ARG.3
+	+	PUSH_EAX                  //push eax
+	+	MOV(ECX, [EBP, 0xC])      //mov ecx, dword ptr [ebp+0C] ; ARG.2
+	+	PUSH(ECX)                 //push ecx
+	+	MOV(EDX, [EBP, 8])        //mov edx, dword ptr [ebp+8] ; ARG.1
+	+	PUSH(EDX)                 //push edx
+	+	CALL([WS2_socket])        //call dword ptr [<&WS2_32.#23>] ; WS2_32.socket()
+	+	MOV([EBP, -4], EAX)       //mov dword ptr [EBP-4], eax
+	+	CMP([EBP, -4], -1)        //cmp dword ptr [EBP-4], -1
+	+	JE(Filler(2,1))           //je short _return
+	+	PUSH_STR("setsockopt")    //push "setsockopt" + jmp
+	+	PUSH(WS2_32)              //push offset "ws2_32.dll"
+	+	CALL([ROC.GetModHandle])  //call dword ptr [<&KERNEL32.GetModuleHandleA>]
+	+	PUSH_EAX                  //push eax
+	+	CALL([ROC.GetProcAddr])   //call dword ptr [<&KERNEL32.GetProcAddress>]
+	+	MOV([EBP, -0xC], EAX)     //mov dword ptr [ebp-0Ch],EAX
+	+	CMP([EBP, -0xC], 0)       //cmp dword ptr [ebp-0Ch],0
+	+	JE(Filler(2,1))           //je short _return
+	+	PUSH(0x04)                //push 4
+	+	LEA(EAX, [EBP, -8])       //lea eax, [ebp-8]
+	+	PUSH_EAX                  //push eax
+	+	PUSH_1                    //push 1
+	+	PUSH(6)                   //push 6
+	+	MOV(ECX, [EBP, -4])       //mov ecx, dword ptr [ebp-4]
+	+	PUSH(ECX)                 //push ecx
+	+	CALL([EBP, -0xC])         //call dword ptr [ebp-0Ch]
+
+	,//2
+		MOV(EAX, [EBP, -4])       //mov eax, dword ptr [ebp-4] ; _return
+	+	FP_STOP                   //mov esp, ebp
+		                          //pop ebp
+	+	RETN(0xC)                 //retn 0Ch
+	];
+
+	const [, fnAddr, _return, allocSize] = MapAddrs(parts);
+
+	$$(_, 2.2, `Prepare the arguments for auto-hook`)
+	const args =
+	{
+		allocSize,
+		localVals : {
+			1 : fnAddr
+		},
+		localTgts : {
+			'2,1' : _return
+		},
+		isPtr : true
+	};
+
+	$$(_, 2.3, `Add our code and update the references`)
+	AutoHook(refAddrs, parts, args);
+
+	return true;
+};

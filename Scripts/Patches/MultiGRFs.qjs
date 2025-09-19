@@ -1,0 +1,361 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Shinryo                                           *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo, Neo-Mind                                      *
+*   Created Date  : 2020-11-07                                             *
+*   Last Modified : 2024-08-14                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Overrides data.grf loading with a custom function which loads the grf names
+///        required in specified order
+///
+///        GRFsFromIni  - User specifies the INI file name and it is used for getting the GRF file names & their order during launch.
+///        GRFsEmbedded - User specifies an existing INI file which will be used for embedding the loading of the GRF files names in order.
+///
+MultiGRFs = function(_)
+{
+	$$(_, 1.1, `Ensure the DGRF object is loaded`)
+	DGRF.load();
+
+	$$(_, 1.2, `Retrieve the refAddr (push location)`)
+	const addr = DGRF.RefAddr;
+
+	$$(_, 2.1, `Find the AddPak call after the PUSH`)
+	let code, type;
+	switch (Exe.Version)
+	{
+		case 6: //VC6
+		{
+			code =
+				CALL(ALLWC)             //call CFileMgr::AddPak
+			+	MOV(EDI, POS3WC)        //mov edi, offset#1
+			;
+			type = 1;
+			break;
+		}
+
+		case 9:  //VC9
+		case 10: // to
+		case 11: //VC11
+		{
+			code =
+				CALL(ALLWC)             //call CFileMgr::AddPak
+			+	MOV(R32, [POS3WC])      //mov regA, dword ptr [addr#1]
+			+	MOV(EAX, [POS3WC])      //mov eax, dword ptr [addr#2]
+			;
+			type = 2;
+			break;
+		}
+		default: //VC14.16 & VC14.29
+		{
+			code =
+				CALL(ALLWC)             //call CFileMgr::AddPak
+			+	MOV(EAX, [POS3WC])      //mov eax, dword ptr [addr#2]
+			;
+			type = 3;
+			break;
+		}
+	}
+	let callAddr = Exe.FindHex(code, addr + 5, addr + 40);
+	if (callAddr < 0)
+	{
+		if (type === 3 || !ROC.Post2010) //VC14.16 & Pre-2010
+		{
+			code =
+				CALL(ALLWC)         //call CFileMgr::AddPak
+			+	PUSH(POS3WC)        //push offset "rdata.grf" OR "1pvpsak1"
+			;
+			callAddr = Exe.FindHex(code, addr + 5, addr + 40);
+		}
+		else if (type === 2) //VC9 - VC11
+		{
+			code = code.remove(MOV(R32, [POS3WC]));
+			callAddr = Exe.FindHex(code, addr + 5, addr + 40);
+		}
+	}
+	if (callAddr < 0 && type === 3)
+	{
+		code =
+			CALL(ALLWC)            //call CFileMgr::AddPak
+		+	MOVUPS(XMM0, [POS4WC]) //movups xmm0, dqword ptr [addr]
+		;
+		callAddr = Exe.FindHex(code, addr + 5, addr + 40);
+	}
+	if (callAddr < 0 && ROC.FullVer == 14.29)
+	{
+		code =
+			CALL(ALLWC)             //call CFileMgr::AddPak
+		+	CALL(ALLWC)             //call func#2
+		+	TEST(AL, AL)            //test al, al
+		+	JNE(WCp)                //jne short _skip
+		;
+		callAddr = Exe.FindHex(code, addr + 5, addr + 40);
+	}
+	if (callAddr < 0)
+		throw Error("AddPak call not found");
+
+	$$(_, 2.2, `Extract AddPak function address`)
+	const AddPak = Exe.GetTgtAddr(callAddr + 1);
+	
+	$$(_, 2.3, `Little trick to avoid changing 10 bytes (change the push to MOV ECX, addr)`)
+	Exe.SetUint8(addr, 0xB9);
+
+	$$(_, 3.1, `Run one of the helper functions below based on the patch name`)
+	///       Helper functions were made for better readability.
+	///       Only the uncommon activities are being done in the seperate functions
+	///
+	if (_ === "GRFsFromIni")
+		this.useINI(callAddr, AddPak);
+	else
+		this.embedList(callAddr, AddPak);
+
+	$$(_, 3.2, `Find the string 'rdata.grf' and zero it out if present`)
+	if (ROC.IsRenewal)
+		Exe.SetInt8(ROC.RGrfPhy, 0);
+
+	return true;
+};
+
+///
+/// \brief Wrappers for individual patches
+///
+GRFsFromIni  = MultiGRFs;
+GRFsEmbedded = MultiGRFs;
+
+///
+/// \brief Adds the function to read INI and hacks AddPak call which loads data.grf to use it
+///
+MultiGRFs.useINI = (callAddr, AddPak) =>
+{
+	const _ = 'MultiGRFs.useINI';
+
+	$$(_, 1.1, `Get the essential addresses for our function`)
+	ROC.findImports();
+
+	if (ROC.Kernel32 < 0)
+		throw Error("'KERNEL32.dll' not found");
+
+	$$(_, 1.2, `Construct the function code`)
+	let parts =
+	[
+		ENTER(0x80, 0)                           //enter 80h, 0
+	+	PUSHAD                                   //pushad
+	+	PUSH(ROC.Kernel32)                       //push "KERNEL32"
+	+	CALL([ROC.GetModHandle])                 //call dword ptr [<&KERNEL32.GetModuleHandleA>]
+	+	TEST(EAX, EAX)                           //test eax, eax
+	+	JZ(Filler(1))                            //jz _codeOver
+	+	MOV(EDI, [ROC.GetProcAddr])              //mov edi, dword ptr [<&KERNEL32.GetProcAddress>]
+	+	PUSH_STR("GetPrivateProfileStringA")     //push "GetPrivateProfileStringA" + jmp
+	+	MOV(EBX, EAX)                            //mov ebx, eax
+	+	PUSH_EAX                                 //push eax ; hModule
+	+	CALL(EDI)                                //call edi ; GetProcAddress
+	+	TEST(EAX, EAX)                           //test eax, eax
+	+	JZ(Filler(1))                            //jz _codeOver
+	+	MOV([EBP, -0xA], EAX)                    //mov dword ptr [ebp-0Ah], eax
+	+	PUSH_STR("WritePrivateProfileStringA")   //push "WritePrivateProfileStringA" + jmp
+	+	MOV(EAX, EBX)                            //mov eax, ebx
+	+	PUSH_EAX                                 //push eax ; hModule
+	+	CALL(EDI)                                //call edi ; GetProcAddress
+	+	TEST(EAX, EAX)                           //test eax, eax
+	+	JZ(Filler(1,1))                          //jz short _codeOver
+	+	MOV([EBP, -6], EAX)                      //mov dword ptr [ebp-6], eax
+	+	XOR(EDX, EDX)                            //xor edx, edx
+
+	,//1
+		MOV(WORD_PTR, [EBP, -2], 0x39)           //mov word ptr [ebp-2], '9' ; _loopOuter
+
+	,//2
+		PUSH(EDX)                                //push edx ; _loopInner
+	+	PUSH(Filler(10))                         //push offset <INI filename>
+	+	PUSH(0x74)                               //push 74h
+	+	LEA(EBX, [EBP, -0x7F])                   //lea ebx, [ebp-7Fh]
+	+	PUSH(EBX)                                //push ebx
+	+	LEA(EAX, [EBP, -2])                      //lea eax, [ebp-2]
+	+	PUSH_EAX                                 //push eax
+	+	PUSH_EAX                                 //push eax
+	+	PUSH(Filler(11))                         //push "Data"
+	+	CALL([EBP, -0xA])                        //call dword ptr [ebp-0Ah]
+	+	LEA(ECX, [EBP, -2])                      //lea ecx, [ebp-2]
+	+	MOV(CX, [ECX])                           //mov cx, word ptr [ecx]
+	+	LEA(EBX, [EBP, -0x7F])                   //lea ebx, [ebp-7Fh]
+	+	CMP(CX, [EBX])                           //cmp cx, word ptr [ebx]
+	+	POP(EDX)                                 //pop edx
+	+	JZ(Filler(4,1))                          //jz short _next
+	+	PUSH(EDX)                                //push edx
+	+	PUSH(EBX)                                //push ebx
+	+	DGRF.MovFMgr                             //mov ecx, offset <g_fileMgr>
+	+	CALL(Filler(5))                          //call CFileMgr::AddPak
+	+	POP(EDX)                                 //pop edx
+	+	INC(EDX)                                 //inc edx
+
+	,//3
+		DEC(BYTE_PTR, [EBP, -2])                 //dec byte ptr [ebp-2] ; _next
+	+	CMP(BYTE_PTR, [EBP, -2], 0x30)           //cmp byte ptr [ebp-2], 30h
+	+	JNB(Filler(2,1))                         //jnb short _loopInner
+	+	TEST(EDX, EDX)                           //test edx, edx
+	+	JNZ(Filler(1,1))                         //jnz short _codeOver
+	+	PUSH(Filler(10))                         //push <INI filename>
+	+	PUSH(DGRF)                               //push "data.grf"
+	+	MOV(WORD_PTR, [EBP, -2], 0x32)           //mov word ptr [ebp-2], 32h
+	+	LEA(EAX, [EBP, -2])                      //lea eax, [ebp-2]
+	+	PUSH_EAX                                 //push eax
+	+	PUSH(Filler(11))                         //push "Data"
+	+	CALL([EBP, -6])                          //call dword ptr [EBP-6]
+	+	TEST(EAX, EAX)                           //test eax, eax
+	+	JNZ(Filler(3,1))                         //jnz short _loopOuter
+
+	,//4
+		POPAD                                    //popad ; _codeOver
+	+	LEAVE                                    //leave
+	+	RETN() + ' 00'                           //retn ; followed by 1 byte gap before strings begin
+	
+	, //5
+		"Data\x00".toHex()                       //ASCII "Data"
+	];
+
+	$$(_, 2.1, `Get the INI file name from user`)
+	let iniFile = Exe.GetUserInput('$dataINI', D_Text, "INI File path", "Enter the name of the INI file (containing GRF names)", "DATA.INI", {minLen: 1, maxLen: 20, saveDefault: true});
+	if (iniFile === false || iniFile.trim().isEmpty())
+		Cancel("No File name specified");
+
+	parts.push(" 2E 5C" + iniFile.toHex()); // .\<INI Filename>
+
+	$$(_, 2.2, `Prepare the arguments for auto-hook`)
+	const [, _loopOuter, _loopInner, _next, _codeOver, dataStrAddr, iniFileAddr, allocSize] = MapAddrs(parts);
+	const args =
+	{
+		allocSize,
+		localVals : {
+			10 : iniFileAddr,
+			11 : dataStrAddr
+		},
+		localTgts : {
+			 1    : _codeOver, //for the long jump
+			'1,1' : _codeOver, //for the short jump
+			'2,1' : _loopInner,
+			'3,1' : _loopOuter,
+			'4,1' : _next
+		},
+		targets : {
+			5 : AddPak
+		},
+		isCall : true
+	};
+
+	$$(_, 2.3, `Add our code and call it from callAddr`)
+	AutoHook(callAddr, parts, args);
+};
+
+///
+/// \brief Prepares the function to load grf files, adds it to the client and hacks AddPak call which loads data.grf to use it
+///
+/// The grf file names are retrieved in order from user specified ini file
+///
+MultiGRFs.embedList = (callAddr, AddPak) =>
+{
+	const _ = 'MultiGRFs.embedList';
+
+	$$(_, 1.1, `Get the INI file from user to read`)
+	const file = Exe.GetUserInput('$inpMultGRF', D_InFile, "GRF List file", "Enter your INI file (containing GRF names) to embed", "Inputs/Sample_DATA.INI");
+	if (file === false)
+		Cancel("No input file received");
+
+	if (file.isEmpty())
+		Cancel("Empty file name received");
+
+	let handle = new TextFile(file, 'r');
+	if (!handle.Valid)
+		throw Error("INI file is not readable");
+
+	$$(_, 1.2, `Read the GRF filenames from the INI file into an array`)
+	let grfNames = [];
+	while (!handle.AtEnd())
+	{
+		const line = handle.ReadLine().trim();
+		const matches = line.match(/^(\d)\s*=\s*(.*)/);
+		if (!matches)
+			continue;
+
+		const [,index, value] = matches;
+		grfNames[index] = value.trim();
+	}
+	handle.Close();
+
+	$$(_, 1.3, `Account for empty input file (atleast data.grf should be there)`)
+	if (grfNames.isEmpty())
+		grfNames[0] = DGRF.Name;
+
+	$$(_, 1.4, `Remove empty indices`)
+	grfNames = grfNames.filter( name => name ?? false );
+
+	$$(_, 2.1, `Construct the loading code in parts`)
+	const suffix =
+		DGRF.MovFMgr     //mov ecx, <g_fileMgr>
+	+	CALL(Filler(1))  //call CFileMgr::AddPak
+	;
+
+	let parts = [];
+	for (const name of grfNames )
+	{
+		parts.unshift(
+			PUSH_STR(name) //push <name> + jmp
+		+	suffix
+		);
+	}
+
+	parts.push(RETN());
+
+	$$(_, 2.2, `Prepare the arguments for auto-hook`)
+	const args = {
+		targets : { 1 : AddPak },
+		isCall : true
+	};
+
+	$$(_, 2.3, `Add our code and call it from callAddr`)
+	AutoHook(callAddr, parts, args);
+};
+
+/**
+NOTES
+If you enable this feature, you will need to create an INI file in the format below
+
+--------[ Example of INI file ]---------
+[data]
+0=bdata.grf
+1=adata.grf
+2=sdata.grf
+3=data.grf
+.
+.
+9=something.grf
+----------------------------------------
+
+For the first version (Ini), you can specify the name of the file and it is expected to be in your client folder.
+For the second version (Embed), you need to have made the file beforehand and specify its path to the patch to load it.
+
+You can only load up to 10 total grf files with this option (0-9).
+The read priority is 0 first to 9 last.
+If you only have say 3 GRF files then you only need to use the first 3 keys i.e. 0, 1, and 2
+**/

@@ -1,0 +1,70 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2022-2024 Andrei Karas (4144)                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANT??ILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144)                                          *
+*   Created Date  : 2022-09-15                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the buffer size being used while calling uncompress function for 
+///        guild emblem files
+///
+CustomMaxEmbFileSize = function(_)
+{
+	$$(_, 1, `Find the locations where the size is moved/compared`)
+	const parts =
+	[
+		PUSH(POS4WC)                //push addr#1
+	+	PUSH(0x2C)                  //push 2C
+	+	MOV([R32, WCp], 0xC800)     //mov dword ptr [LOCAL.x], 0C800
+	,
+		MOV(BYTE_PTR, [R32, 4], 0)  //mov byte ptr [regA+4], 0
+	+	CALL()                      //call func#1
+	];
+	
+	
+	const addrs = Exe.FindHexN(1, 2, parts);
+	if (addrs.isEmpty())
+		throw Error("Found inadequate or excess no. of matches");
+	
+	const offset = parts.byteCount(0) - 4;
+	
+	$$(_, 2.1, `Get the new max value from user`)
+	const varName = '$maxEmblemSize';
+    const value = Exe.GetUserInput(varName, D_Int32, "Max Emblem size", "Enter Max file size for guild emblem", 0xC800, {min: 1});
+	if (value === false)
+		Cancel("Max Size", 0xC800);
+
+    $$(_, 2.2, `Replace the 0xC800 value`)
+	for (const addr of addrs)
+		Exe.SetFromVar(addr + offset, varName);
+	
+	return true;
+};
+
+///
+/// \brief Disable for older clients
+///
+CustomMaxEmbFileSize.validate = () =>
+	Exe.BuildDate > 20190700;

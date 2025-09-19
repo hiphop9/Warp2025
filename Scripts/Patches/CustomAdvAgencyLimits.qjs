@@ -1,0 +1,129 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2018-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2020-2024 Asheraf                                        *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144), Asheraf                                 *
+*   Created Date  : 2021-01-14                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Update the limits used in Adventure Agency window function
+///
+CustomAdvAgencyLimits = function(_)
+{
+	$$(_, 1.1, `Find the format string for integers`)
+	const strAddr = Exe.FindText("%d");
+	if (strAddr < 0)
+        throw Error("Format string missing");
+
+	$$(_, 1.2, `Find all locations of the Upper Limit addition`)
+    let code =
+		LEA(EAX, [ESI, 5])            //lea eax, [esi+5]
+	+	(Exe.Version > 11
+	?
+		MOV(WORD_PTR, [EBP, WC], 0)   //mov word ptr [LOCAL.x], 0
+	:
+		''
+	)
+	+	PUSH_EAX                      //push eax
+	+	PUSH(strAddr)                 //push offset "%d"
+	+	PUSH(-1)                      //push -1
+	;
+
+    const addrsU = Exe.FindHexN(code);
+    if (addrsU.isEmpty())
+        throw Error("AgencyUpperLevellimit not found");
+
+	$$(_, 1.3, `Find all locations of the Lower Limit subtraction`)
+	code =
+	[
+		LEA(EAX, [ESI, -5])    //lea eax, [esi-5]
+	,
+		ROC.FullVer == 14.29
+	?
+		MOV(WORD_PTR, [EBP, WCn], 0) //mov word ptr [LOCAL.x], 0
+	+	MOV(ECX, 1)                  //mov ecx, 1
+	:
+		''
+	,
+		Exe.Version > 11
+	?	XORPS(XMM0, XMM0)      //xorps xmm0, xmm0
+	:	''
+	,
+		CMP(EAX, ECX)          //cmp eax, ecx
+	,
+		Exe.Version > 11
+	?	MOVQ([EBP, WCn], XMM0) //movq dword ptr [var_1C], XMM0
+	:	''
+	,
+		ROC.FullVer == 14.29
+	?
+		CMOVG(ECX, EAX)        //cmovg ecx, eax
+	+	LEA(EAX, [EBP, WCn])   //lea eax, [LOCAL.y]
+	+	PUSH(ECX)	           //push ecx          
+	:
+		CMOVL(EAX, ECX)        //cmovl eax, ecx
+	+	PUSH_EAX               //push eax
+	,
+		PUSH(strAddr)          //push offset "%d"
+	+	PUSH(-1)               //push -1
+	];
+    const addrsL = Exe.FindHexN(code);
+	if (addrsL.isEmpty())
+        throw Error("AgencyLowerLevellimit not found");
+
+	$$(_, 2.1, `Obtain the 2 limits`)
+	const result = Exe.GetUserInput("$agencyLimits", D_VecI8, "Adventure Agency Levels", "Enter the new level limits", [-5, 5], {
+		name0: "Lower Limit", max0: -1,
+		name1: "Upper Limit", min1: 1,
+	});
+
+	if (result === false)
+		Cancel("Limits", "(-5, +5)");
+
+	const [lower, upper] = result;
+
+
+	$$(_, 2.2, `Change the upper limit if new value is provided`)
+	if (upper !== 5)
+	{
+		for (const addr of addrsU)
+			Exe.SetInt8(addr + 2, upper);
+	}
+
+	$$(_, 2.3, `Change the lower limit if new value is provided`)
+	if (lower !== -5)
+	{
+		for (const addr of addrsL)
+			Exe.SetInt8(addr + 2, lower);
+	}
+
+    return true;
+};
+
+///
+/// \brief Disable for clients without the string
+///
+CustomAdvAgencyLimits.validate = () =>
+	Exe.FindText("btn_job_def_on", PHYSICAL) > 0;

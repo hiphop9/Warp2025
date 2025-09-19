@@ -1,0 +1,183 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Ai4rei/AN                                         *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Ai4rei/AN, Neo-Mind                                    *
+*   Created Date  : 2020-11-10                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Translate Korean strings to user specified strings both loaded from user specified file.
+///
+TranslateClient = function(_)
+{
+	$$(_, 1.1, `Get the translation map file from user`)
+	const inFile = Exe.GetUserInput('$translationFile', D_InFile, "Translation Mapping", "Enter the translation file", "Inputs/Translations_EN.yml", {filters: YMLFILTER});
+	if (inFile === false)
+		Cancel("No translation file specified");
+
+	$$(_, 1.2, `Load the mapping`)
+	const Translations = Warp.LoadYaml(inFile);
+	if (Translations === false)
+		return false;
+
+	else if (!IsArr(Translations))
+		throw Error("Need a list of translations");
+
+	$$(_, 1.3, `Open the Failed Translations output file - for writing out unexpected translation fails`)
+	let fp = new TextFile(OUTDIR + "FailedTranslations_" + ROC.BaseName + ".txt", 'w');
+	if (!fp.Valid)
+		throw Error("Unable to create FailedTranslations Output file");
+
+	$$(_, 2.1, `Retrieve the Section end point addresses`)
+	const dbegin  = Exe.GetSectBegin(DATA);
+	const d2begin = Exe.GetSectBegin(DATA2);
+	const dend  = Exe.GetSectEnd(DATA);
+	const d2end = Exe.GetSectEnd(DATA2);
+
+	$$(_, 2.2, `Save the filtered array with successful translations`)
+	const translated = Translations.filter( (hash, idx) =>
+	{
+		const __ = `${_} [${idx}]`;
+
+		$$(__, 2.3, `Retrieve the 5 parts & verify if we are within the expected date range for the builddate`)
+		let findPat = hash.find;
+		let replStr = hash.replace;
+		let {startDate, endDate, startDateRE, endDateRE, startDate0, endDate0, desc} = hash;
+
+		if (ROC.IsRenewal)
+		{
+			startDateRE = startDateRE ?? startDate;
+			endDateRE = endDateRE ?? endDate;
+
+			if ( (IsNum(startDateRE) && Exe.BuildDate < startDateRE) || (IsNum(endDateRE) && Exe.BuildDate > endDateRE) )
+				return true; // its not a fail
+		}
+		else if (ROC.IsZero)
+		{
+			startDate0 = startDate0 ?? startDate;
+			endDate0 = endDate0 ?? endDate;
+
+			if ( (IsNum(startDate0) && Exe.BuildDate < startDate0) || (IsNum(endDate0) && Exe.BuildDate > endDate0) )
+				return true; // its not a fail
+		}
+		else if ( (IsNum(startDate) && Exe.BuildDate < startDate) || (IsNum(endDate) && Exe.BuildDate > endDate) )
+			return true; // its not a fail
+
+		$$(__, 2.4, `Ensure description is a valid string/number, defaults to the replacement string`)
+		desc = desc ?? replStr;
+
+		if (!IsNumOrStr(desc))
+			desc = "Translation #" + idx;
+
+		$$(__, 2.5, `Ensure we have valid patterns for search & replace`)
+		if (!IsStr(findPat))
+		{
+			fp.WriteLine(desc + " => Invalid/Non-existent search pattern");
+			return false;
+		}
+
+		if (!IsStr(replStr))
+		{
+			fp.WriteLine(desc + " => Invalid/Non-existent replacement pattern");
+			return false;
+		}
+
+		$$(__, 2.6, `Check if the search pattern is hex or text string`)
+		let hexMode = true;
+		let parts = findPat.match(/^\s*<(.*)>\s*$/);
+		if (parts === null)
+		{
+			if (findPat.includes('\x00')) //if null is present then search pattern need to be hex
+				findPat = findPat.toHex();
+			else
+				hexMode = false;
+		}
+		else
+		{
+			findPat = parts[1];
+		}
+
+		$$(__, 2.7, `Find the pattern`)
+		let addr;
+		if (hexMode)
+		{
+			addr = Exe.FindHex(" 00" + findPat + " 00", dbegin, dend);
+			if (addr < 0 && d2begin > 0)
+				addr = Exe.FindHex(" 00" + findPat + " 00", d2begin, d2end);
+		}
+		else
+		{
+			addr = Exe.FindText(findPat, PHYSICAL);
+		}
+
+		$$(__, 2.8, `If not found write to FailedTranslations.txt`)
+		if (addr < 0)
+		{
+			fp.WriteLine(desc + " => Pattern not found");
+			return false;
+		}
+
+		$$(__, 2.9, `Increment addr for hexMode (since we searched with 0 prefixed)`)
+		if (hexMode)
+			addr++;
+
+		$$(__, 2.10, `Repeat 3.6 for replacement string`)
+		hexMode = true;
+		parts = replStr.match(/^\s*<(.*)>\s*$/);
+		if (parts === null)
+		{
+			if (replStr.includes('\x00'))
+				replStr = replStr.toHex();
+			else
+				hexMode = false;
+		}
+		else
+		{
+			replStr = parts[1];
+		}
+
+		$$(__, 2.11, `Replace based on hexMode`)
+		if (hexMode)
+			Exe.SetHex(addr, replStr + " 00");
+		else
+			Exe.SetText(addr, replStr + "\x00");
+
+		return true;
+	});
+	fp.Close();
+
+	$$(_, 3.1, `If "translated" is empty i.e. everything in Translations array failed (highly unlikely), then report error`)
+	if (translated.isEmpty())
+		throw Error("All translations had issues");
+
+	$$(_, 3.2, `If any fails were found, ask user if they want to see the FailedTranslations.txt to cross check for unexpected failures (only displays for Main GUI)`)
+	if (!Warp.TestMode && translated.length < Translations.length)
+	{
+		if (UserChoice("Show Failures", "Some translations failed (not necessarily an error). Would you like to view them?"))
+			Warp.Show(fp.Path);
+	}
+
+	return true;
+};

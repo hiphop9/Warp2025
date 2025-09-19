@@ -1,0 +1,107 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 X-EcutiOnner (xex.ecutionner@gmail.com)        *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : X-EcutiOnner                                           *
+*   Created Date  : 2021-01-23                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Enforce the JZ after comparison of IsEffectHatItem function result inside ITEMWNDINFO function
+///        (skips creating the equipment preview button on the items description window).
+///
+NoEquipPreview = function(_)
+{
+	$$(_, 1, `Find the comparison`)
+	const prefix =
+		PUSH(this.StrAddr)               // push offset "IsEffectHatItem"
+	+	(ROC.FullVer == 14.29
+	?
+		MOV([ECX], 0)                    //mov dword ptr [ecx], 0
+	+	MOV([ECX, 0x10], 0)              //mov dword ptr [ecx+10h], 0
+	+	MOV([ECX, 0x14], 0xF)            //mov dword ptr [ecx+14h], 0Fh
+	:
+		MOV(BYTE_PTR, [ECX], 0)          // mov byte ptr [ecx], 0
+	)
+	+	CALL(ALLWC)                      // call std::string::assign
+	+	MOV([EBP, WCn], POS2WC)          // mov dword ptr [LOCAL.x], immA
+	+	PUSH([POS4WC])                   // push dword ptr [GlobLuaState]
+	+	MOV([EBP, WCn], -1)              // mov dword ptr [LOCAL.x], -1
+	+	CALL(ALLWC)                      // call FnCaller
+	+	ADD(ESP, 0x28)                   // add esp, 28h
+	+	CMP(BYTE_PTR, [EBP, NEG3WC], 1)  // cmp byte ptr [LOCAL.y], 1
+	;
+
+	const suffix =
+		JZ(POS3WC)                       // jz _skip
+	+	PUSH(POS2WC)                     // push immB
+	+	CALL(ALLWC)                      // call <operator_new>
+	+	ADD(ESP, 4)                      // add esp, 4
+	+	MOV([EBP, NEG3WC], EAX)          // mov dword ptr [LOCAL.z], eax
+	+	MOV([EBP, WCn], POS2WC)          // mov dword ptr [LOCAL.x], immC
+	+	TEST(EAX, EAX)                   // test eax, eax
+	+	JZ('[000010.1]')                 // jz short _skip#2 ; after the JMP below
+	+	MOV(ECX, EAX)                    // mov ecx, eax
+	+	CALL(ALLWC)                      // call UIBasicButton::UIBasicButton
+	+	(ROC.FullVer == 14.29
+	?	MOV(ESI, EAX)
+	:	''
+	)
+	+	JMP(WC)                          // jmp short _next
+	;
+	
+    const addr = Exe.FindHex(prefix + suffix);
+    if (addr < 0)
+		throw Error("Pattern not found");
+
+    /*
+	const repLoc = 48;
+    const stringAssignOffset = 9;
+    const luaStateOffset = [22, 4];
+    const luaCallVaOffset = 34;
+    const UIBasicButtonSize = [55, 4];
+    const newOffset = 60;
+    const UIBasicButtonConstructorOffset = 87;
+
+    logRawFunc("std_string_assign", offset, stringAssignOffset);
+    logField("CSession::m_lua_state", offset, luaStateOffset);
+    logRawFunc("lua_call_va", offset, luaCallVaOffset);
+    logVal("sizeof UIBasicButton", offset, UIBasicButtonSize);
+    logRawFunc("operator_new", offset, newOffset);
+    logRawFunc("UIBasicButton_UIBasicButton", offset, UIBasicButtonConstructorOffset);
+	*/
+
+    $$(_, 2, `Change the long JZ to JMP`)
+	Exe.SetJMP(addr + prefix.byteCount());
+
+    return true;
+}
+
+///
+/// \brief Disable for Unsupported Clients - Need the string
+///
+NoEquipPreview.validate = function()
+{
+	this.StrAddr = Exe.FindText("IsEffectHatItem");
+	return (this.StrAddr > 0);
+};

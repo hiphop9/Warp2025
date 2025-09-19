@@ -1,0 +1,195 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 CH.C (jchcc)                                   *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : CH.C (jchcc)                                           *
+*   Created Date  : 2021-06-10                                             *
+*   Last Modified : 2024-08-30                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Reconstruct songs code by borrow LandProtector's code
+///        inside CSkill::OnProcess function.
+///
+RestoreSongsEffect = function(_)
+{
+	$$(_, 1.1, `Find CSkill::OnProcess`)
+	let prefix =
+		CALL(ALLWC)                          //call CGameActor::GetJob
+	+	ADD(EAX, -0x7E)                      //add eax,-7E
+	+	CMP(EAX, POS1WC)                     //cmp eax,MAX_EFNUM
+	+	JA(POS3WC)                           //ja addr
+	;
+	let suffix =
+		MOVZX(EAX, BYTE_PTR, [EAX, POS4WC])  //movzx eax,byte ptr [eax+idxTbl]
+	+	JMP([4, EAX, POS4WC])                //jmp dword ptr [eax*4+jmpTbl]
+	;
+
+	let addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0)
+		throw Error("CSkill::OnProcess not found");
+
+	$$(_, 1.2, `Get the address of switch table indices`)
+	const idxTbl = Exe.GetUint32(addr + prefix.byteCount() + 3);
+
+	$$(_, 2.1, `Find & borrow the code of LandProtector (case 9Dh)`)
+	if (Exe.Version === 11)
+	{
+		prefix =
+			CMP([ESI, POS2WC], 0) //cmp dword ptr [esi+3E0h], 0
+		+	JNE(ALLWC)            //jne _skip
+		+	SUB(ESP, 0x10)        //sub esp, 10h
+		+	MOV(ECX, ESP)         //mov ecx, esp
+		+	MOV([ESP, WCp], 0)    //mov dword ptr [esp+0C],0
+		;
+	}
+	else //VC14.16
+	{
+		const hasExtra = ROC.IsZero
+		?	Exe.BuildDate > 20220000 && Exe.BuildDate < 20221200
+		:	Exe.BuildDate > 20200300 && Exe.BuildDate < 20220400
+		;
+		
+		prefix =
+			MOV(ECX, [ESI, POS2WC]) //mov ecx, dword ptr [esi + 3E0h]
+		+	TEST(ECX, ECX)          //test ecx, ecx
+		+	JNE(ALLWC)              //jne _skip
+		+	SUB(ESP, 0x10)          //sub esp, 10h
+		+	(hasExtra
+		?
+			MOV([EBP, WCn], ECX)    //mov dword ptr [LOCAL.x], ecx
+		+	MOV(EAX, [EBP, WCn])    //mov dword ptr eax,[LOCAL.x]
+		:
+			''
+		)
+		+	MOV([ESP, WCp], ECX)    //mov dword ptr [esp + dispA], ecx
+		+	MOV(ECX, ESP)           //mov ecx, esp
+		;
+	}
+	suffix =
+		PUSH(0xF2)            //push F2h ; <=== patch location
+	+	JMP()                 //jmp addr
+	;
+
+	addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0)
+		throw Error("Borrow code not found");
+
+	$$(_, 2.2, `Save the patch location and the target of the JMP as the return location`)
+	const patchAddr = addr + prefix.byteCount();
+	const retnVir = Exe.GetTgtAddr(patchAddr + suffix.byteCount());//might as well goto the JMP target directly
+
+	$$(_, 2.3, `Get skill id addr`)
+	if (ROC.FullVer == 14.29)
+	{
+		prefix = ''
+		;
+		suffix =
+			MOV(ESI, [R32, POS2WC]) //mov esi, dword ptr [regA + skillOffset]
+		+	MOV(EAX, [R32])         //mov eax, dword ptr [regA]
+		+	CALL([EAX, WCp])        //call dword ptr [eax + constA]
+		+	PUSH_EAX                //push eax
+		;
+	}
+	else
+	{
+		prefix =
+			MOV(EAX, POS2WC)        //mov eax, 1094h
+		+	JNE(6)                  //jne short _ skip#1
+		;
+		suffix =
+			MOV(EAX, [ESI, POS2WC]) //mov eax, dword ptr [esi + skillOffset]
+		+	POP(ESI)                //pop esi
+		+	RETN()                  //retn ; _skip#1
+		;
+	}
+	
+	addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0)
+		throw Error("skill addr not found");
+
+	const sklOffset = Exe.GetUint32(addr + prefix.byteCount() + 2);
+
+	$$(_, 2.4, `Prepare effectID list`)
+	const effectIDs = [242, 278, 279, 280, 281, 282, 283, 284, 285, 277, 286, 287, 288, 289, 290, 291, 292, 293, 294];
+
+	$$(_, 3.1, `Prepare the code & template to insert`)
+	let ins =
+		PUSH_EAX                   //push eax
+	+	MOV(EAX, [ESI, sklOffset]) //mov eax,[esi + skillOffset]
+	+	SUB(EAX, 0x9D)             //sub eax, 9Dh
+	+	JMP([4, EAX, Filler(1)])   //jmp dword ptr [eax*4 + newJmpAddrs]
+	;
+	const case1Offset = ins.byteCount();
+
+	const template =
+		POP_EAX          //pop eax
+	+	PUSH(Filler(2))  //push <effectID>
+	+	PUSH(retnVir)    //push <retnVir>
+	+	RETN()           //retn
+	;
+	const tsize = template.byteCount();
+
+	$$(_, 3.2, `Allocate space for it and the new jump table & case codes`)
+	const size = case1Offset + effectIDs.length * (tsize + 4); //4 for the jump table itself
+	const [free, freeVir] = Exe.Allocate(size, 0x10);
+
+	$$(_, 3.3, `Fill in the blanks`)
+	ins = SwapFillers( ins, {1: freeVir + case1Offset + effectIDs.length * tsize} ); //newJmpAddrs
+
+	$$(_, 3.4, `Construct the new switch cases & jump table`)
+	let caseCodes = "";
+	let newJmpAddrs = "";
+	let caseAddr = freeVir + case1Offset;
+
+	for (const id of effectIDs)
+	{
+		caseCodes += SwapFillers( template, 1, {2: id} );
+
+		newJmpAddrs += caseAddr.toHex(4);
+		caseAddr += tsize;
+	}
+
+	$$(_, 3.5, `Add at allocated space`)
+	Exe.SetHex(free, ins + caseCodes + newJmpAddrs);
+
+	$$(_, 3.6, `Add a Jump to this at the patch address`)
+	Exe.SetJMP(patchAddr, freeVir);
+
+	$$(_, 3.7, `Modify the indirect switch table to always goto our patched code`)
+	const firstUnitID = 126;
+	const LPUnitID = 157;
+	const firstSongUnitID = 158;
+
+	const idxPhy = Exe.Vir2Phy(idxTbl, CODE);
+	const LPtblOffset = Exe.GetHex(idxPhy + (LPUnitID - firstUnitID), 1);
+
+	Exe.SetHex(idxPhy + (firstSongUnitID - firstUnitID), LPtblOffset.repeat(effectIDs.length - 1));
+
+	return true;
+};
+
+///
+/// \brief Disable for clients which doesn't need a restoration
+///
+RestoreSongsEffect.validate = () =>
+	Exe.BuildDate > 20181120;

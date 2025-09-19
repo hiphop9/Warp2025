@@ -1,0 +1,532 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-10-29                                             *
+*   Last Modified : 2024-08-07                                             *
+*                                                                          *
+\**************************************************************************/
+
+  //============//
+ // Converters //
+//============//
+
+///
+/// \brief Method to convert integer to bit string
+///
+Number.prototype.toBits = function(cnt = 32)
+{
+	cnt = Math.min(cnt, 32);
+	if (this < 0)
+	{
+		const num = 0xFFFFFFFF + this + 1;
+		return (num.toString(2)).slice(-cnt);
+	}
+	else
+	{
+		return ('0'.repeat(cnt) + this.toString(2)).slice(-cnt);
+	}
+};
+
+///
+/// \brief Method to convert integer to hex string.
+///
+Number.prototype.toHex = function(cnt = 4, bigEndian = false)
+{
+	const _ = Log.dive(this, 'toHex');
+
+	$$(_, 1.1, `If only endian ness is specified then count is 4 so rearrange`)
+	if (IsBool(cnt))
+	{
+		bigEndian = cnt;
+		cnt = 4;
+	}
+
+	$$(_, 1.2, `Restrict byte count to 4`)
+	cnt = Math.min(cnt, 4);
+
+	$$(_, 1.3, `Convert signed to equivalent unsigned version`)
+	let num = this;
+	if (num < 0)
+		num = 0xFFFFFFFF + num + 1;
+
+	$$(_, 2.1, `Calculate the length using the cnt`)
+	const len = cnt * 2;
+
+	$$(_, 2.2, `Use the toString method to generate the hex string (big endian)`)
+	const hex = ("00000000" + num.toString(16).toUpperCase()).slice(-len);
+
+	$$(_, 2.3, `If big endian is needed, return the string`)
+	if (bigEndian)
+		return Log.rise(hex);
+
+	$$(_, 2.4, `Otherwise convert it to little endian with spaces prefixed per byte`)
+	let result = "";
+	for (let index = 0; index < len; index += 2)
+	{
+		result = " " + hex.substr(index, 2) + result;
+	}
+
+	return Log.rise(result);
+};
+
+///
+/// \brief Method to convert 'this' Float to IEEE format hex string.
+///
+Number.prototype.toIEEE = function(bigEndian = false)
+{
+	const _ = Log.dive(this, 'toIEEE');
+
+	$$(_, 1.1, `Prefix the sign bit`)
+	let bin = (this < 0 ? '1' : '0'); //sign bit
+
+	$$(_, 1.2, `Get the integer part`)
+	let num = Math.abs(this);
+
+	$$(_, 1.3, `Initialize the exponent`)
+	let exp = 0;
+
+	if (num < 1)
+	{
+		$$(_, 2.1, `For numbers < 1 , decrement the exponent`)
+		for (; num < 1; num *= 2.0, exp--);
+	}
+
+	else if (num >= 2)
+	{
+		$$(_, 2.2, `For numbers >= 2 , increment the exponent`)
+		for (; num >= 2; num /= 2.0, exp++);
+	}
+
+	$$(_, 2.3, `Suffix the exponent + 127 to the binary (ensure 8 bits)`)
+	bin += ('0'.repeat(8) + (exp + 127).toString(2)).slice(-8);  //exponent + 0x7F
+
+	$$(_, 2.4, `Suffix the mantissa (i.e. num) with 1. removed`)
+	bin += num.toString(2).slice(2);
+
+	$$(_, 2.5, `Clip anything beyond 32 bits`)
+	bin = (bin + '0'.repeat(23)).slice(0, 32);
+
+	$$(_, 2.6, `Convert the binary to hex and return`)
+	return Log.rise(parseInt(bin, 2).toHex(4, bigEndian));
+};
+
+///
+/// \brief Method to convert 'this' little endian hex string to equivalent integer
+///
+String.prototype.toInt = function(cnt = 4, signed = true)
+{
+	const _ = Log.dive(this, 'toInt');
+
+	$$(_, 1.1, `If only signed is specified rearrang accordingly`)
+	if (IsBool(cnt))
+	{
+		signed = cnt;
+		cnt = 4;
+	}
+
+	$$(_, 1.2, `Restrict the byte count`)
+	cnt = Math.min(cnt, 4);
+
+	$$(_, 1.3, `Calculate the max value possible (used for signed conversion)`)
+	const max = Math.pow(0x100, cnt);
+
+	$$(_, 2.1, `Convert to Big endian format`)
+	const beHex = "0x" + this.le2be().slice(-cnt*2);
+
+	$$(_, 2.2, `Use parseInt to convert to integer`)
+	let num = (-1 & parseInt(beHex, 16));
+
+	$$(_, 2.3, `Account for signed integer & return the result`)
+	if (signed && num > max/2)
+		num -= max;
+
+	return Log.rise(num);
+};
+
+///
+/// \brief Method to convert 'this' ascii string to equivalent hex string
+///
+String.prototype.toHex = function()
+{
+	const _ = Log.dive(this, 'toHex');
+
+	$$(_, 1.1, `Initialize the result string`)
+	let result = "";
+
+	for (let i = 0; i < this.length; i++)
+	{
+		$$(_, 1.2, `Convert each charcter to equivalent hex`)
+		let hex = this.charCodeAt(i).toString(16).toUpperCase();
+
+		$$(_, 1.3, `Prefix '0' for 0-15 to ensure 2 hex chars per byte`)
+		if (hex.length == 1)
+			hex = '0' + hex; //prefix 0 for byte 0-F
+
+		$$(_, 1.4, `Prefix space`)
+		result += ' ' + hex;
+	}
+
+	$$(_, 2, `Return the result`)
+	return Log.rise(result);
+};
+
+///
+/// \brief Method to convert 'this' hex string to equivalent ascii string
+///
+String.prototype.toAscii = function()
+{
+	const _ = Log.dive(this, 'toAscii');
+
+	$$(_, 1.1, `Split the hex string into the respective bytes (2chars each)`)
+	const parts = this.trim().split(/ +/);
+
+	$$(_, 1.2, `Initialize the result`)
+	let str = "";
+
+	for (let i = 0; i < parts.length; i++)
+	{
+		$$(_, 1.3, `Convert each part to its equivalent number [' + i + ']`)
+		const ccode = parseInt(parts[i], 16);
+
+		$$(_, 1.4, `Convert the number to equivalent ascii character and append`)
+		str += String.fromCharCode(ccode);
+	}
+
+	$$(_, 2, `Return the result`)
+	return Log.rise(str);
+};
+
+///
+/// \brief Method to convert 'this' Little Endian Hex string to Big Endian with no spaces
+///
+String.prototype.le2be = function()
+{
+	const _ = Log.dive(this, 'le2be');
+
+	$$(_, 1.1, `Split based on space and reverse it and join back`)
+	let be = this.split(/ +/).reverse().join('');
+
+	$$(_ , 1.2, `Prefix '0' to ensure even no of characters`)
+	if ((be.length % 2) !== 0)
+		be = '0' + be;
+
+	$$(_, 2, `Return the result`)
+	return Log.rise(be);
+};
+
+///
+/// \brief Method to return a Proxy of the Map which allows for destructuring
+///
+Map.prototype.open = function()
+{
+	return new Proxy(this, {
+		get (obj, prop) {
+			return obj.get(prop)
+		}
+	});
+};
+
+  //=========//
+ // Testers //
+//=========//
+
+///
+/// \brief Method to check for empty array
+///
+Array.prototype.isEmpty = function()
+{
+	return this.length === 0;
+};
+
+///
+/// \brief Method to check if the array only has 1 register inside like [ECX]
+///
+Array.prototype.isRegPtr = function()
+{
+	return this.length === 1 && IsReg(this[0]);
+};
+
+///
+/// \brief Method to check if the array only has 1 displacement inside like [90442]
+///
+Array.prototype.isDispPtr = function()
+{
+	return this.length === 1 && (IsNumOrStr(this[0]) || this[0].toString().isHex());
+};
+
+///
+/// \brief Method to check for empty string
+///
+String.prototype.isEmpty = function()
+{
+	return this.length === 0;
+};
+
+///
+/// \brief Method to check whether 'this' string only has hex characters, blank space & wildcard characters
+///
+String.prototype.isHex = function()
+{
+	return this.search(/[^ a-f0-9_\?\.\[\]]/i) < 0;
+};
+
+  //==============//
+ // Transformers //
+//==============//
+
+///
+/// \brief Extended version of 'find' method to return a transformed value instead
+///
+Array.prototype.findAs = function( f )
+{
+	if (typeof f !== 'function')
+		throw TypeError("Function expected in 'findAs'");
+
+	for (let i = 0; i < this.length; i++)
+	{
+		const result = f(this[i], i, this);
+		if ( result )
+			return result;
+	}
+};
+
+///
+/// \brief Method to remove substring and return the modified string. Original is unaffected
+///
+String.prototype.remove = function(str)
+{
+	return this.replace(str, '');
+};
+
+///
+/// \brief Method to replace substring at specific index and return the modified string. Original is unaffected
+///
+String.prototype.replaceAt = function(index, newstr, len = -1)
+{
+	const _ = Log.dive(this, 'replaceAt');
+
+	$$(_, 1.1, "Use the new string's length as default replacement length")
+	if (len <= 0)
+		len = newstr.length;
+
+	$$(_, 1.2, `If negative index provided then consider it wrt end of string`)
+	if (index < 0)
+		index += this.length;
+
+	$$(_, 2, `Return the replaced string`)
+	return Log.rise(this.slice(0, index) + newstr + this.slice(index + len));
+};
+
+///
+/// \brief Method to insert substring at specific index and return the modified string. Original is unaffected
+///
+String.prototype.insertAt = function(index, str)
+{
+	return this.slice(0, index) + str + this.slice(index);
+};
+
+///
+/// \brief Method to append the given hex string and return the modified string. Original is unaffected.
+///        If the data is a number it is converted to hex format first
+///
+String.prototype.appendAsHex = function(data, bc, bigEndian)
+{
+	const _ = Log.dive(this, 'appendAsHex');
+
+	$$(_, 1, `Get the type of the data provided`)
+	const type = typeof data;
+
+	switch(type)
+	{
+		case 'number':
+
+			$$(_, 2.1, `If it is a number append the data converted to hex and return it`)
+			return Log.rise(this + data.toHex(bc, bigEndian));
+
+		case 'string':
+
+			$$(_, 2.2, `If it is a string append the data and return it`)
+			return Log.rise(this + data);
+
+		case 'object':
+
+			$$(_, 2.3, `If it is an object, convert to hex and return it`)
+			let result = data.valueOf();
+			if (typeof result === 'number')
+				return Log.rise(this + result.toHex(bc, bigEndian));
+
+			result = data.toString();
+			if (result.isHex())
+				return Log.rise(this + result);
+	}
+
+	$$(_, 2.4, `Return the original if no expected values found`)
+	return Log.rise(this + '');
+};
+
+  //=============//
+ // Calculators //
+//=============//
+
+///
+/// \brief Method to calculate the byte count of 'this' hex string
+///
+String.prototype.byteCount = function()
+{
+	const _ = Log.dive(this + 'byteCount');
+
+	$$(_, 1, `Ensure string is a hex string (also supports bitwise parts i.e. [.])`)
+	if (!this.isHex())
+		return Log.rise(-1);
+
+	$$(_, 2.1, `Split the string into parts based on bit wrapper '['`)
+	const parts = this.replace(/_\.?(\w\w)\w*/g, '$1').replace(/ +/g, '').split('[');
+
+	$$(_, 2.2, `Initialize the nibble length`)
+	let nibLen = 0;
+
+	for (const part of parts)
+	{
+		$$(_, 2.3, `Split based on bit wrapper end ']' (${part})`)
+		const subParts = part.split(']');
+
+		$$(_, 2.4, `If it was there then left of it is binary and right is hex . Otherwise its all hex`)
+		if (subParts.length > 1)
+			nibLen += subParts[0].length/4 + subParts[1].length;
+		else
+			nibLen += subParts[0].length;
+	}
+
+	$$(_, 3, `Return the half of the length`)
+	return Log.rise(Math.round(nibLen/2));
+};
+
+///
+/// \brief Same as above but calculates the total byte count of all the hex strings inside.
+///        If indices are provided then only those set of strings are used in the calculation.
+///        Returns -1 for out of bounds index and 0 for empty/invalid array
+///
+Array.prototype.byteCount = function(idx, endIdx)
+{
+	if (typeof idx === 'number' && idx >= 0)
+	{
+		if (idx >= this.length)
+			return -1;
+
+		if (typeof endIdx !== 'number' || endIdx < idx)
+			endIdx = idx;
+
+		return this.reduce( (acc, val, i) => (i >= idx && i <= endIdx && typeof val === 'string' && val.isHex()) ? acc + val.byteCount() : acc, 0 );
+	}
+	else
+	{
+		return this.reduce( (acc, val) => (typeof val === 'string' && val.isHex()) ? acc + val.byteCount() : acc, 0 );
+	}
+};
+
+  //===========//
+ // Utilities //
+//===========//
+
+///
+/// \brief Method to get the an element value directly
+///
+Set.prototype.get = function(idx)
+{
+	if (idx < 0 || idx > this.size-1)
+		return null;
+
+	let elem;
+	let iter = this.values();
+	do
+	{
+		elem = iter.next();
+		idx--;
+	}
+	while (idx >= 0);
+
+	return elem.value;
+}
+
+///
+/// \brief Method to check for existence of a value in a map
+///
+Map.prototype.hasValue = function(v)
+{
+	for (let [, val] of this)
+	{
+		if (val === v)
+			return true;
+	}
+	return false;
+}
+
+///
+/// \brief Method to get the last value easily
+///
+Array.prototype.last = function()
+{
+	return this[this.length - 1];
+};
+
+///
+/// \brief Method to take out the first element if it matches the typeName provided. Kind of like a stack.
+///
+Array.prototype.take_if = function(typeName, defVal)
+{
+	if (this.length == 0 || typeof this[0] != typeName || (typeName === 'object' && this[0] == undefined))
+		return defVal;
+	else
+		return this.shift();
+};
+
+///
+/// \brief Quick method to call with the function itself as 'this' pointer.
+///
+Function.prototype.self = function()
+{
+	return this.call(this, ...arguments);
+};
+
+  //=================//
+ // Identifications //
+//=================//
+
+Warp.identify('console', [
+	'debug', 'dump', 'showAddr', 'showAddrs'
+]);
+
+Warp.identify('Array', [], [
+	'isEmpty', 'isRegPtr', 'isDispPtr',
+	'findAs', 'last', 'take_if'
+]);
+
+Warp.identify('Number', [], [
+	'toBits', 'toHex', 'toIEEE'
+]);
+
+Warp.identify('String', [], [
+	'appendAsHex', 'byteCount', 'insertAt', 'isEmpty',
+	'isHex', 'le2be', 'remove', 'replaceAt', 'toAscii',
+	'toHex', 'toInt'
+]);

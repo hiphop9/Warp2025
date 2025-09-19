@@ -1,0 +1,68 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2024 Ai4rei/AN                                         *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Ai4rei/AN                                              *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the conditional jumps to JMP after Hourly comparisons inside CRenderer::DrawAgeRate & PlayTime functions
+///
+NoHourly = function(_)
+{
+    // ──────────────────────────────────────────────
+    // 1. GameGrade / Hourly block 
+    // ──────────────────────────────────────────────
+    $$(_, 1.1, `Find the GameGrade/Hourly block`)
+
+    let pattern1 = "75 33 66 8B 4D E8 66 85 C9 75 17 84 C0 75 26 C6 05 ?? ?? ?? ?? 01";
+    let addrs1 = Exe.FindHexN(pattern1);
+
+    if (addrs1.isEmpty())
+        throw Error("GameGrade comparison not found");
+
+    // 첫 번째 매치만 사용
+    let addr1 = addrs1[0];
+
+    $$(_, 1.2, `Patch JNE -> JMP`)
+    // 75 → EB
+    Exe.SetHex(addr1, "EB");
+
+	// ──────────────────────────────────────────────
+    // 2. PlayTime 
+	// ──────────────────────────────────────────────
+    $$(_, 2.1, `Find PlayTime JLE block`)
+
+    let pattern2 = "0F 8E ?? ?? ?? ?? 39 35 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 8B CF E8 ?? ?? ?? ??";
+    let addr2 = Exe.FindHex(pattern2);
+
+    if (addr2 < 0)
+        throw Error("PlayTime JLE comparison not found");
+
+    $$(_, 2.2, `Patch JLE -> NOP+JMP`)
+    // 0F 8E → 90 E9
+    Exe.SetHex(addr2, "90 E9");
+
+    return true;
+};

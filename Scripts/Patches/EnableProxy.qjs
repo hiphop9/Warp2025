@@ -1,0 +1,183 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Ai4rei/AN                                         *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Ai4rei/AN, Neo-Mind                                    *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Divert connect() call in CConnection::Connect() function to custom function.
+///        The custom function saves the first IP used and use it for any following connection attempts.
+///
+EnableProxy = function(_)
+{
+	$$(_, 1.1, `Find the string 'Failed to setup select mode'`)
+	let addr = Exe.FindText("Failed to setup select mode");
+	if (addr > 0)
+	{
+		$$(_, 1.2, `Find where it is PUSHed`)
+		addr = Exe.FindHex( PUSH(addr) );
+		if (addr < 0)
+			throw Error("Setup string not used");
+	}
+	else if (Exe.BuildDate > 20191020)
+	{
+		$$(_, 1.3, `Find the new pattern`)
+		addr = Exe.FindHex(
+			(
+				PUSH(0xA000)          //push A000h
+			+	LEA(ECX, [R32, WCp])  //lea ecx, [regA + dispA]
+			+	CALL(ALLWC)           //call func#1
+			).repeat(3)               //push A000h
+			                          //lea ecx, [regA + dispB]
+			                          //call func#2
+			                          //push A000h
+			                          //lea ecx, [regA + dispC]
+			                          //call func#3
+			+	PUSH_0                //push 0
+			+	PUSH_1                //push 1
+			+	PUSH_2                //push 2
+		);
+		if (addr < 0)
+			throw Error("New pattern not found");
+
+		$$(_, 1.4, `Find the reference to 2733 after it`)
+		addr = Exe.FindLastHex(CMP(EAX, 0x2733), addr + 0x280, addr + 0x100);
+		if (addr < 0)
+			throw Error("2733 comparison missing");
+
+		addr += 5;
+	}
+	else
+		throw Error("Setup string not found");
+
+	let code, indirectCALL, callAddr;
+	if (Exe.BuildDate < 20101000) //VC6 + Initial VC9 clients
+	{
+		$$(_, 2.1, `Find connect call (Direct) within 90h bytes before the PUSH`)
+		code =
+			CALL(ALLWC)          //call <&WS2_32.connect>
+		+	(Exe.Version > 6
+		?
+			POP_R                //pop regA
+		+	POP_R                //pop regB
+		:
+			''
+		)
+		+   CMP(EAX, -1)         //cmp eax, -1
+		+   JNZ(WCp)             //jnz short _proceed
+		+   CALL(ALLWC)          //call <&WS2_32.WSAGetLastError>
+		+   CMP(EAX, 0x2733)     //cmp eax, 2733h
+		;
+		indirectCALL = false;
+		callAddr = Exe.FindHex(code, addr - 0x90, addr);
+	}
+	else //newer
+	{
+		$$(_, 2.2, `Find connect call (Indirect) within 0xA0 bytes before the PUSH`)
+		const head =
+			  (Exe.Version > 10)
+			? PUSH([R32, 4])        // push dword ptr [refReg+4]
+			: MOV([R32, 0xA], R16); // mov word ptr [refReg+0Ah], reg16B
+
+		// push [refReg+4]; call [connect]; cmp eax,-1; jnz short; mov reg,[WSAGetLastError]; call reg; cmp eax,2733
+		const patA =
+			  head
+			+ CALL([ALLWCp])        // call dword ptr [<&WS2_32.connect>]
+			+ CMP(EAX, -1)
+			+ JNZ(WCp)
+			+ MOV(R32, [ALLWCp])    // mov regA, [<&WS2_32.WSAGetLastError>]
+			+ CALL(R32)             // call regA
+			+ CMP(EAX, 0x2733);
+
+		// push [refReg+4]; call [connect]; cmp eax,-1; jnz short; call [WSAGetLastError]; cmp eax,2733
+		const patB =
+			  head
+			+ CALL([ALLWCp])        // call [connect]
+			+ CMP(EAX, -1)
+			+ JNZ(WCp)
+			+ CALL([ALLWCp])        // call [WSAGetLastError]
+			+ CMP(EAX, 0x2733);
+
+		indirectCALL = true;
+		callAddr = Exe.FindHex(patA, addr - 0xA0, addr);
+		if (callAddr < 0)
+			callAddr = Exe.FindHex(patB, addr - 0xA0, addr);
+	}
+	if (callAddr < 0)
+		throw Error("'connect' CALL not found");
+
+	let refReg;
+	if (indirectCALL)
+	{
+		$$(_, 2.3, `Extract the register used & move callAddr to the next instruction which is the actual CALL`)
+		const ins = Instr.FromAddr(callAddr);
+		refReg = ins.MRM.getReg('M');
+		callAddr = ins.NextAddr;
+	}
+	else
+	{
+		$$(_, 2.4, `If direct CALL, it means they are older clients and only ESI was used`)
+		refReg = ESI;
+	}
+
+	$$(_, 2.5, `Extract address of ws2_32.connect`)
+	const connAddr = indirectCALL
+		? Exe.GetInt32(callAddr + 2)
+		: Exe.GetTgtAddr(callAddr + 1)
+		;
+
+	$$(_, 3.1, `Construct our function (IP saver code)`)
+	code =
+		ALL00                   // ; g_saveIP
+	+	MOV(EAX, [Filler(1)])   //mov eax, dword ptr [g_saveIP]
+	+   TEST(EAX, EAX)          //test eax, eax
+	+   JNZ(0x08)               //jnz short _skip
+	+   MOV(EAX, [refReg, 0xC]) //mov eax, dword ptr [refReg + 0C] ; usually ESI
+	+   MOV([Filler(1)], EAX)   //mov dword ptr [g_saveIP], EAX
+	+   MOV([refReg, 0xC], EAX) //MOV dword ptr [refReg + 0C], EAX <- _skip
+	+	(indirectCALL
+	?
+		JMP([connAddr])         //jmp dword ptr [<&WS2_32.connect>]
+	:                           //  OR
+		JMP(Filler(2))          //jmp <&WS2_32.connect>; will be filled later since we need relative addr
+	);
+
+	$$(_, 3.2, `Prepare the arguments for auto-hook`)
+	const args =
+	{
+		snap : 1,
+		localVals : {1 : 0},         //g_saveIP
+		targets : {2 : connAddr},
+		isCall : true,
+		nops : indirectCALL ? 1 : 0, //need a NOP for indirect CALL since we are converting it to a direct one
+		jcOffset : 4                 //code starts 4 bytes afterwards
+	};
+
+	$$(_, 3.3, `Add our code and redirect the connect call to use it instead`)
+	AutoHook(callAddr, code, args);
+
+	return true;
+};

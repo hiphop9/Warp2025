@@ -1,0 +1,174 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2020-2024 X-EcutiOnner (xex.ecutionner@gmail.com)        *
+*   Copyright (C) 2019-2024 CH.C (jchcc)                                   *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANT??ILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144), X-EcutiOnner, CH.C (jchcc)              *
+*   Created Date  : 2021-01-22                                             *
+*   Last Modified : 2024-08-12                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the PUSH after comparison to edit value on friends window
+///        inside UIMessengerGroupWnd_virt68 function
+///
+CustomFriendsLimit = function(_)
+{
+    $$(_, 1.1, `Search pattern for jump to the friends window`)
+	let code;
+	if (Exe.BuildDate > 20170000)
+	{
+		const reg = Exe.BuildDate > 20220000 && ROC.FullVer != 14.29 ? EBX : EDI;
+		const disp = Exe.BuildDate > 20221000 ? POS2WC : POS1WC;
+		
+		code =
+			MOV(EAX, [reg, POS1WC]) // 00 mov eax, dword ptr [regA+98h] ; regA = ebx (for 2023 client) or edi
+		+	(ROC.FullVer == 14.29
+		?	MOV(R32, [EBP, NEG2WC])
+		:	''
+		)
+		+	MOV(EAX, [EAX, 0x18])   // 06 mov eax, dword ptr [eax+18h]
+		+	CDQ                     // 09 cdq
+		+	(ROC.FullVer == 14.29
+		?	IDIV([R32])             // 10 idiv dword ptr [edi+100h/108h]
+		:	IDIV([reg, POS2WC])     // 10 idiv dword ptr [edi+100h/108h]
+		)
+		+	MOV([reg, disp], EAX)   // 16 mov dword ptr [edi+0F8h/100h], eax
+		;
+	}
+	else if (Exe.BuildDate > 20131200)
+	{
+        code =
+			MOV(R32, [R32, POS1WC]) // 00 mov eax, dword ptr [edi+90h]
+		+	MOV(R32, [R32, WCp])    // 06 mov eax, dword ptr [eax+18h]
+		+	CDQ                     // 09 cdq
+		+	IDIV(ECX)               // 10 idiv ecx
+		+	MOV([R32, POS1WC], R32) // 12 mov dword ptr [edi+0F0h], eax
+		;
+	}
+	else
+	{
+		code =
+			MOV(R32, [R32, WCp])    // 00 mov edx, dword ptr [esi+78h]
+		+	MOV(R32, [R32, WCp])    // 03 mov eax, dword ptr [edx+0Ch]
+		+   CDQ                     // 06 cdq
+		+	IDIV(ECX)               // 07 idiv ecx
+		+	MOV([R32, POS1WC], EAX) // 09 mov dword ptr [esi+0E0h], eax
+		;
+	}
+	
+    const refAddr = Exe.FindHex(code);
+	if (refAddr < 0)
+        throw Error("Reference pattern missing");
+
+    $$(_, 1.2, `Now find the argument push for the max friends limit`)
+	const prefix = PUSH(0x28);                                    //push 28h
+	if (Exe.Version > 10) //VC11+
+	{
+		code =
+			PUSH([R32, POS1WC])                                 //push dword ptr [regA + const]
+		+	(Exe.BuildDate > 20170000 //need to flip the order
+		?
+			LEA(R32, [EBP, NEG2WC])                             //lea regB, [ebp - multiByteStr]
+		+	PUSH([4, R32, EBP, NEG2WC])                         //push dword ptr [4*regC + ebp - var_3c8]
+		:
+			PUSH([4, R32, EBP, NEG2WC])                         //push dword ptr [4*regC + ebp - var_3c8]
+		+	LEA(R32, [EBP, NEG2WC])                             //lea regB, [ebp - multiByteStr]
+		)
+		;
+	}
+	else
+	{
+		code =
+			PUSH_R                                              //push regA
+		+	PUSH_R                                              //push regB
+		+	LEA(R32, ROC.HasFP ? [EBP, NEG2WC] : [ESP, POS2WC]) //lea regC, [LOCAL.x]
+		;
+	}
+	const suffix = PUSH(this.FmtAddr);                          //push offset "%s(%d/%d)"
+
+	const addr = Exe.FindHex(prefix + code + suffix, refAddr, refAddr + 0xBC);
+	if (addr < 0)
+        throw Error("PUSH Pattern missing");
+
+	$$(_, 2.1, `Get the new limit from user`)
+	const varName = '$maxFriends';
+    const value = Exe.GetUserInput(varName, D_Int8, "Max Friends", "Enter Max Friends Limit", 40, {min: 1});
+	if (value === false)
+		Cancel("Limit", 40);
+
+    $$(_, 2.2, `Replace the 28 with this value`)
+    Exe.SetFromVar(addr + 1, varName);
+
+    return true;
+};
+
+///
+/// \brief Disable for Unsupported Clients - Need the format string
+///
+CustomFriendsLimit.validate = function()
+{
+	this.FmtAddr = Exe.FindText("%s(%d/%d)");
+    return this.FmtAddr > 0;
+};
+
+// TODO - Not working for clients before 2017
+
+///
+/// \brief Find the max party value inside UIMessengerGroupWnd_virt68
+///
+CustomPartyLimit = function(_)
+{
+	$$(_, 1.1, `Find the reference pattern`)
+	let addr = Exe.FindHex( PUSH(0xC9F) );
+	if (addr < 0)
+		throw Error("Reference pattern missing");
+
+	$$(_, 1.2, `Find the GetNumParty call below it.`)
+	const code =
+		MOV(ECX, POS4WC)	// mov ecx, <g_session>
+	+	PUSH(0xC)			// push 0Ch
+	+	CALL()				// call CSession::GetNumParty
+	;
+	
+	addr = Exe.FindHex(code, addr, addr + 0x90);
+	if (addr < 0)
+		throw Error("GetNumParty CALL missing");
+
+	$$(_, 2.1, `Get new value from user`)
+	const varName = '$maxParty';
+	const val = Exe.GetUserInput(varName, D_Uint8, "Party Limit", "Enter Max Party Value", 12, {min:1, max:127});
+	if (val === false)
+		Cancel("Value", 12);
+
+	$$(_, 2.2, `Replace the value`)
+	Exe.SetFromVar(addr + 6, varName);
+
+	return true;
+};
+
+///
+/// \brief Temporarily disable for Pre-2017 clients
+///
+CustomPartyLimit.validate = () =>
+	Exe.BuildDate >= 20170000;

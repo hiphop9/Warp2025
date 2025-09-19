@@ -1,0 +1,76 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-10-30                                             *
+*   Last Modified : 2024-08-07                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Convenience class identify Data Sizes for Ptrs and Imms
+///
+if (typeof PtrSize === 'undefined') //avoid redefinition
+{
+	PtrSize = class
+	{
+		///
+		/// \brief Constructor
+		///
+		constructor(size)
+		{
+			this.Value = size;
+		}
+
+		///
+		/// \brief toString override
+		///
+		toString()
+		{
+			return this.Value.toString();
+		}
+	};
+
+	IdentifyClass(PtrSize);
+
+	///
+	/// \brief Define the pointer Sizes
+	///
+	for (const [name, size] of
+	[
+		['BYTE_PTR'   ,   8],
+		['WORD_PTR'   ,  16],
+		['DWORD_PTR'  ,  32], //default pointer size in most cases and not usually explicity specified but it has its uses
+		['QWORD_PTR'  ,  64],
+		['TBYTE_PTR'  ,  80],
+		['DQWORD_PTR' , 128],
+	])
+		Assign(name, `new PtrSize(${size})`);
+
+	///
+	/// \brief Tests whether given var contains a 'PtrSize' object
+	///
+	IsPtrSize = v =>
+		v instanceof PtrSize;
+
+	IdentifyObj("IsPtrSize");
+}

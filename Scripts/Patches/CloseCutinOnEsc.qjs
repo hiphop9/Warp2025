@@ -1,0 +1,296 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2018-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2020-2024 Neo Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144), Neo-Mind                                *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-23                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Swap out the check for Esc key inside UIWindowMgr::ProcessPushButton
+///        for UIIllustWnd to enable closing the cutin window.
+///
+CloseCutinOnEsc = function(_)
+{
+	$$(_, 1.1, `Find the test for case 6 inside UIIllustWnd::SendMsg`)
+	let code =
+		JE(POS2WC)      //je _next ; this is for CMP EAX, 6
+	+ 	CMP(EAX, 0x22)  //cmp eax, 22h
+	+ 	JE(POS2WC)      //je _next
+	+ 	CMP(EAX, 0x4E)  //cmp eax, 4Eh
+	;
+
+	let addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Case 6 test missing");
+
+	$$(_, 1.2, `Set addr to first JE location`)
+	addr = Exe.GetTgtAddr(addr + 2, PHYSICAL);
+
+	$$(_, 1.3, `Look for the GetGameMode CALL inside UIIllustWnd::SendMsg`)
+	const prefix =
+		MOV(ECX, POS4WC)            //mov ecx, <g_modeMgr>
+	+	CALL(ALLWC)                 //call CModeMgr::GetGameMode
+	;
+	code = "";
+
+	if (Exe.Version < 14)
+		code += MOV(EDX, [EAX]);    //mov edx, dword ptr [eax] ; for VC6 - VC11
+
+	code +=	PUSH_0;                 //push 0
+
+	if (Exe.BuildDate > 20110217)
+		code += PUSH(' 0?');        //push 0 / push 1
+
+	code +=	PUSH(-1);               //push -1
+
+	if (Exe.Version > 11)
+	{
+		code +=
+			MOV(EDX, [EAX])         //mov edx, dword ptr [eax]
+		+	MOV(ECX, EAX)           //mov ecx, eax
+		;
+	}
+
+	code += PUSH(POS3WC);           //push offset "" ; zeros at the location
+
+	if (Exe.Version > 6 && Exe.BuildDate < 20150000) //VC9 - VC10 (some of them)
+	{
+		code +=
+			MOV(ECX, EAX)           //mov ecx, eax
+		+	MOV(EAX, [EDX, ' 1?'])  //mov eax, dword ptr [edx + dispA] ; dispA is either 14 or 18
+		;
+	}
+
+	code += PUSH(' [011.0.0.]');    //push 64h / push 71h
+
+	if (Exe.Version === 6 || Exe.BuildDate > 20150000)
+	{
+		if (Exe.Version < 14)
+			code += MOV(ECX, EAX);  //mov ecx, eax
+
+		code += CALL([EDX, ' 1?']); //call dword ptr [edx + dispA] ; dispA is either 14 or 18
+	}
+	else
+	{
+		code += CALL(EAX);          //call eax
+	}
+
+	const addr2 = Exe.FindHex(prefix + code, addr, addr + 0x50);
+	if (addr2 < 0)
+		throw Error("GetGameMode CALL missing");
+
+	$$(_, 1.4, `Extract the necessary data`)
+	const gModeMgr = Exe.GetUint32(addr2 + 1);
+	const GetGameMode = Exe.GetTgtAddr(addr2 + 6);
+
+	const suffix = Exe.GetHex(addr2 + prefix.byteCount(), code.byteCount());
+
+	$$(_, 2.1, `Construct the common codes for new & old clients`)
+	let part2;
+	if (ROC.FullVer)
+	{
+		part2 =
+			PUSH_R         //push regA
+		+	MOV(ECX, R32)  //mov ecx, regB
+		+	CALL(ALLWC)    //call UIWindowMgr::DeleteWindow
+		;
+	}
+	else
+	{
+		part2 =
+			CMP(R32, -1)   //cmp regA, -1
+		+	((Exe.BuildDate > 20101116 && Exe.BuildDate < 20141020) || Exe.BuildDate > 20200800
+		?
+			JE(POS1WC)     //je _skip
+		:                  // or
+			JZ(WCp)        //jz short _skip
+		)
+		+	PUSH_R         //push regA
+		+	MOV(ECX, R32)  //mov ecx, regB
+		+	CALL(ALLWC)    //call UIWindowMgr::DeleteWindow
+		;
+	}
+	const dwinOffset = part2.byteCount() - 4;
+
+	part2 += Exe.BuildDate <= 20120222 ?
+		TEST(AL, AL)   //test al, al
+	:                  //   OR
+		CMP(AL, 1)     //cmp al, 1
+	;
+
+	$$(_, 2.2, `Search for the Esc Key check inside UIWindowMgr::ProcessPushButton`)
+	let part1, funcOffset;
+	if (Exe.Version > 11) //VC14.16
+	{
+		part1 =
+			PUSH_R                 //push regA
+		+	MOV(ECX, POS4WC)       //mov ecx, offset
+		+	CALL(ALLWC)            //call UIWindowMgr::check_close  <-- patch here
+		;
+		funcOffset = part1.byteCount() - 4;
+
+		part1 +=
+			MOV(ECX, EAX)          //mov ecx, eax
+		+	TEST(ECX, ECX)         //test ecx, ecx
+		+	JE(ROC.FullVer == 14.29 ? POS2WC : WCp) //je _skip#2
+		;
+
+		addr = Exe.FindHex(part1);
+	}
+	else
+	{
+		part1 =
+			PUSH(R32)              //push regA
+		+	MOV(ECX, R32)          //mov ecx, regB
+		+	CALL(ALLWC)            //call UIWindowMgr::check_close <-- patch here
+		;
+		funcOffset = part1.byteCount() - 4;
+
+		if (Exe.Version > 6)
+		{
+			part1 +=
+				TEST(AL, AL)       //test al, al
+			+	JNZ(POS2WC)        //jnz _next
+			;
+		}
+
+		addr = Exe.FindHex(part1 + part2); //need both for unique identification
+	}
+	if (addr < 0)
+		throw Error("Esc key check not found");
+
+	$$(_, 2.3, `Extract the necessary stuff`)
+	const FirstFunc = Exe.GetTgtAddr(addr + funcOffset);  //VIRTUAL address of the first function (check_close or unknownFunc)
+	const MovECX    = Instr.FromAddr(addr + 1);           //The 'mov ecx, * ' instruction
+	const hookAddr  = addr + funcOffset - 1;              //CALL location
+	const retnVir   = Exe.Phy2Vir(addr + funcOffset + 4); //VIRTUAL address of location after the CALL
+
+	$$(_, 2.4, `Position addr after part1`)
+	addr += part1.byteCount();
+
+	let jmpVir;
+	if (ROC.FullVer == 14.29)
+	{
+		$$(_, 2.5, `Construct code for identifying default case`)
+		let part1b =
+			CMP(R32, -1)   //cmp regA, -1
+		+	JNE(NEG2WC)
+		;
+		const jneOffset = part1b.byteCount() - 4;
+
+		part1b +=
+			CMP([POS4WC], 2)
+		+	JNE(NEG2WC)
+		+	PUSH_0
+		;
+
+		$$(_ + 2.6, `Find the default case for VC14.29 clients`)
+		addr = Exe.FindHex(part1b, addr, addr + 0x150);
+		if (addr < 0)
+			throw Error("Default case missing");
+
+
+		$$(_ + 2.7, `Save the address as Jump address & Move to jne target`)
+		jmpVir = Exe.Phy2Vir(addr, CODE);
+		addr = Exe.GetTgtAddr(addr + jneOffset, PHYSICAL);
+	}
+
+	if (Exe.Version > 11)
+	{
+		$$(_, 2.8, `Find the 2nd part for VC14.* clients`)
+		addr = Exe.FindHex(part2, addr, addr + 0x100);	
+		if (addr < 0)
+			throw Error("DeleteWindow CALL missing");
+
+		$$(_, 2.9, `Save the address as Jump address for VC14.16`)
+		if(ROC.FullVer != 14.29)
+			jmpVir = Exe.Phy2Vir(addr, CODE);
+	}
+	else
+	{
+		$$(_, 2.7, `For VC11 and older retnVir is jmpVir`)
+		jmpVir = retnVir;
+	}
+
+	$$(_, 2.8, `Extract the DeleteWindow function address`)
+	const DeleteWindow = Exe.GetTgtAddr(addr + dwinOffset); //VIRTUAL address of DeleteWindow
+
+	$$(_, 3.1, `Construct our code`)
+	const parts =
+	[//0
+		PUSH(78)            //push 78h ; window id
+	+	CALL(Filler(1))     //call UIWindowMgr::DeleteWindow
+	+	CMP(AL, 0)          //cmp al, 0
+	+	JNZ(Filler(2,1) )   //jnz short _skip#3
+	+	MovECX              //mov ecx, regA / mov ecx, offset
+	+	PUSH(retnVir)       //push retnVir
+	+	JMP(Filler(3))      //jmp UIWindowMgr::check_close ; equivalent to CALL intended for return to retnVir
+
+	,//1
+		PUSH(EDX)           //push edx ; _skip#3
+	+	MOV(ECX, gModeMgr)  //mov ecx, <g_modeMgr>
+	+	CALL(Filler(4))     //call CModeMgr::GetGameMode
+	+	MOV(EDX, [EAX])     //mov edx, dword ptr [eax]
+
+	+	suffix              //push 0
+		                    //push 0 or 1 (for newer clients)
+		                    //push -1
+		                    //push offset ""
+		                    //push 64h / push 71h
+		                    //mov ecx, eax
+		                    //call dword ptr [EDX + dispA]
+		                    //    OR
+							//mov regA, dword ptr [EDX + dispA] ; dispA is either 14 or 18
+		                    //call regA
+
+	+	POP(EDX)            //pop edx
+	+	POP_EAX             //pop eax
+	+	JMP(Filler(5))      //jmp <jmpVir>
+	];
+
+	$$(_, 3.2, `Prepare the arguments for auto-hook`)
+	const args =
+	{
+		targets : {
+			1 : DeleteWindow,
+			3 : FirstFunc,
+			4 : GetGameMode,
+			5 : jmpVir
+		},
+		localTgts : {
+			'2,1' : parts.byteCount(0) //_skip#3
+		}
+	};
+
+	$$(_, 3.3, ` Add our code & jump to it from hookAddr`)
+	AutoHook(hookAddr, parts, args);
+
+	return true;
+};
+
+///
+/// \brief Enable only for 2010+ clients
+///
+CloseCutinOnEsc.validate = IsPost2010;

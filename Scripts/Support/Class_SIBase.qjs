@@ -1,0 +1,93 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-10-30                                             *
+*   Last Modified : 2024-08-07                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Convenience class for representing a SIB byte
+///
+if (typeof SIBase === 'undefined') //avoid redefinition
+{
+	SIBase = class
+	{
+		///
+		/// \brief Constructor
+		///
+		constructor(scale, index, base)
+		{
+			let data =
+				IsStr(index)          ? index :                // Check for WildCard + direct hex strings in Index
+				IsStr(base)           ? base  :                // Check for WildCard + direct hex strings in Base
+				arguments.length == 3 ? [scale, index, base] : // All 3 args provided
+				IsNum(scale)          ? scale :                // The SIB byte itself provided (used in Instr class when extracting instructions)
+				                        0 ;                    // Empty SIB
+
+			[this.Scale, this.Index, this.Base, this.Data] = ParseData(data, true);
+		}
+
+		///
+		/// \brief Method to update the data based on the members. Use null for members which dont change
+		///        (used when modifying extracted instructions)
+		///
+		update(s, i, b)
+		{
+			let parts = ParseData([
+				s ?? this.Scale,
+				i ?? this.Index,
+				b ?? this.Base
+			], true);
+
+			[this.Scale, this.Index, this.Base, this.Data] = parts; //we can combine this with above line but this is cleaner
+		}
+
+		///
+		/// \brief Method to retrieve the Index & Base members as registers
+		///
+		getReg(section, bitsize = 32)
+		{
+			const val = (section === 'I' ? this.Index : this.Base);
+
+			if (IsReg(val))
+				return val;
+
+			const ph = PH_Regs[bitsize];
+			if (ph == undefined)
+				return null;
+
+			return (IsNum(val) && val >= 0 && val <= 7) ? ph.List[val] : ph;
+		}
+
+		///
+		/// \brief toString override
+		///
+		toString()
+		{
+			return `Data = ${this.Data} {Scale = ${this.Scale} , Index = ${this.Index} , Base = ${this.Base}}`;
+		}
+	};
+
+	IdentifyClass(SIBase, ["Scale", "Index", "Base", "Data"]);
+}

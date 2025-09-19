@@ -1,0 +1,25 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Shinryo                                           *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+\**************************************************************************/
+
+NpcDialogueScrolling = function(_)
+{
+  const pat = "83 7A 2C 10 75 ?? ??";
+  const pos = Exe.FindHex(pat);
+  if (pos < 0)
+    throw Error("NpcDialogueScrolling pattern not found");
+
+  // 83 7A 2C 10 **75** ?? ??
+  Exe.SetHex(pos + 4, "EB");
+  return true;
+};
+
+//
+NpcDialogueScrolling.validate = () => Exe.BuildDate >= 20240713;
+// Optional alias for listing
+EnableNpcDialogueScrolling = NpcDialogueScrolling;

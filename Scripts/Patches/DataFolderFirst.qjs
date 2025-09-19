@@ -1,0 +1,153 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2024 Shinryo                                           *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo                                                *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change all JZ/JNZ/CMOVNZ after g_readFolderFirst comparison to NOP/JMP/MOV.
+///        Also sets g_readFolderFirst to 1 in the process as failsafe.
+///
+DataFolderFirst = function(_)
+{
+	if (Exe.BuildDate >= 20250300) {
+		$$(_, 0.1, `Find the new DataFolderFirst pattern (2025+)`)
+		let p2025 = "0F 84 ?? ?? ?? ?? 6A 00 68 80 00 00 00 6A 03 6A 00 6A 01 68 00 00 00 80 FF 75 08 FF 15 ?? ?? ?? ?? 8B 5D 0C 8B F8 83 FF FF";
+		let a2025 = Exe.FindHex(p2025);
+		if (a2025 < 0)
+			throw Error("New DataFolderFirst pattern not found (2025+)");
+		$$(_, 0.2, `NOP out the JZ near (0F 84 ...)`)
+		Exe.SetNOPs(a2025, 6); // 0F 84 xx xx xx xx ¡æ 90 90 90 90 90 90
+		return true;
+	}
+
+	$$(_, 1.1, `Find the string 'loading'`)
+	const addr = Exe.FindText("loading");
+	if (addr < 0)
+		throw Error("'loading' not found");
+
+	$$(_, 1.2, `Find where it is PUSHed (g_readFolderFirst is assigned just above it)`)
+	let code, repl, gloc, rloc;
+	switch (Exe.Version)
+	{
+		case 6:  //VC6
+		case 9:  // to
+		case 10: //VC10
+		{
+			code =
+				JZ(0x07)                    //jz short _skip#1 - skip the MOV below
+			+	MOV(BYTE_PTR, [POS4WC], 1)  //mov byte ptr [g_readFolderFirst], 1
+			+	PUSH(addr)                  //push offset "loading" ; _skip#1
+			;
+			repl = 0x9090;//Change JZ SHORT to NOPs
+			gloc = 4;
+			rloc = 0;
+			break;
+		}
+		case 11:
+		{
+			code =
+				CMOVNE(R32, R32)   //cmovne regA, regB
+			+	MOV([POS4WC], R8)  //mov byte ptr [g_readFolderFirst], reg8A
+			+	PUSH(addr)         //push offset "loading"
+			;
+			repl = 0x8B90;  //change CMOVNE to NOP + MOV
+			gloc = 5;
+			rloc = 0;
+			break;
+		}
+		default: // VC14.16
+		{
+			code =
+				PUSH(addr)         //push offset "loading"
+			+	CMOVNE(R32, R32)   //cmovne regA, regB
+			+	MOV([POS4WC], R8)  //mov byte ptr [g_readFolderFirst], reg8A
+			;
+			repl = 0x8B90;  //change CMOVNZ to NOP + MOV
+			gloc = code.byteCount() - 4;
+			rloc = 5;
+			break;
+		}
+	}
+
+	const addr2 = Exe.FindHex(code);
+	if (addr2 < 0)
+		throw Error("'loading' not PUSHed");
+
+	$$(_, 1.2, `Change the conditional instruction appropriately (this is a failsafe)`)
+	Exe.SetUint16(addr2 + rloc, repl);
+
+	///===================================================================///
+	/// Client also compares g_readFolderFirst even before it is assigned ///
+	/// sometimes hence we also fix up the comparisons.                   ///
+	///===================================================================///
+
+	$$(_, 2.1, `Extract g_readFolderFirst`)
+	const ReadFolderFirst = Exe.GetHex(addr2 + gloc, 4);
+	if (Exe.Version === 6)
+	{
+		$$(_, 2.2, `Find the Comparison for VC6 Clients`)
+		const addrs = Exe.FindHexN( MOV(AL, [ReadFolderFirst]) ); //mov al, byte ptr [g_readFolderFirst]
+		if (addrs.isEmpty())
+			throw Error("Comparisons not found (VC6)");
+
+		addrs.forEach( (memAddr, idx) =>
+		{
+			const __ = `${_} [${idx}]`;
+
+			$$(__, 2.3, `Find the conditional jump after each comparison`)
+			const addr = Exe.FindHex( JE(POS2WC), memAddr + 0x5, memAddr + 0x20);//jz _skip#2
+			if (addr < 0)
+				throw Error(`No jump found for comparison No.${idx + 1} <b>for (VC6)</b>`);
+
+			$$(__, 2.4, `NOP out the jump`)
+			Exe.SetNOPs(addr, 6);
+		});
+	}
+	else
+	{
+		$$(_, 3.1, `Find the Comparison for VC9+ Clients`)
+		const addrs = Exe.FindHexN( CMP(BYTE_PTR, [ReadFolderFirst], 0) ); //CMP byte ptr [g_readFolderFirst], 0
+		if (addrs.isEmpty())
+			throw Error("Comparisons not found (VC9+)");
+		
+		const suf = ROC.FullVer == 14.29 ? PUSH_0 : CALL();
+		addrs.forEach( (memAddr, idx) =>
+		{
+			const __ = `${_} [${idx}]`;
+
+			$$(__, 3.2, `Find the conditional jump after each comparison`)
+			const addr = Exe.FindHex( JZ(WCp) + suf, memAddr + 0x7, memAddr + 0x20);//jz short _skip#3
+			                                                                        //call func#2 / push 0 for new clients
+			if (addr < 0)
+				throw Error(`No jump found for comparison No.${idx + 1} <b>for (VC9+)</b>`);
+
+			$$(__, 3.3, `NOP out the jump`)
+			Exe.SetNOPs(addr, 2);
+		});
+	}
+
+	return true;
+};

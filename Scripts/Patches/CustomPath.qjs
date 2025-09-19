@@ -1,0 +1,784 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*   Copyright (C) 2018-2024 Jian                                           *
+*   Copyright (C) 2017 Secret                                              *
+*   Copyright (C) 2017-2024 Andrei Karas (4144)                            *
+*   Copyright (C) 2020-2024 X-EcutiOnner                                   *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind, Jian, Secret, Andrei (4144), X-EcutiOnner    *
+*   Created Date  : 2020-11-09                                             *
+*   Last Modified : 2024-09-26                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Common function to change specific file paths
+///
+CustomPath = function(_)
+{
+	$$(_, 1.1, `Ensure 'Disable BGM' is not selected (unless in test mode)`);
+	if (!Warp.TestMode && _ === 'CustomDefaultBGM')
+		Warp.SetPatchState("NoBGMAudio", false);
+
+	$$(_, 1.2, `Retrieve the data for the index`);
+	const {varName, prefix, strType, name, nameAddr} = this.Data.get(_);
+
+	$$(_, 1.3, `Find location where the string is PUSHed`);
+	let addr = Exe.FindHex(PUSH(nameAddr));
+	let refAddrs;
+	let dest = ECX;
+
+	if (addr < 0 && ROC.FullVer == 14.29 && _ === 'CustomPrivAirplaneLub')
+	{
+		const loc0 = [EBP, WCn],
+		      loc1 = [EBP, WCn],
+		      loc2 = [EBP, WCn],
+		      loc3 = [EBP, WCn];
+		const parts =
+		[
+			PUSH(0x20)
+		+	MOV(loc0, 0xF)
+		+	MOV(BYTE_PTR, loc1, 0)
+		+	CALL(ALLWC),
+
+			MOVUPS(XMM0, [nameAddr]),
+
+			MOV(ECX, EAX)
+		+	MOV(loc2, 0x1F)
+		+	MOV(loc3, 0x1F),
+
+			MOVUPS([ECX], XMM0)
+		+	MOVQ(XMM0, [nameAddr + 0x10])
+		+	MOVQ([ECX, 0x10], XMM0)
+		+	MOV(EAX, [nameAddr + 0x18])
+		+	MOV([ECX, 0x18], EAX)
+		+	MOV(AX, [nameAddr + 0x1C])
+		+	MOV([ECX, 0x1C], AX)
+		+	MOV(AL, [nameAddr + 0x1E])
+		+	MOV([ECX, 0x1E], AL)
+		+	MOV(BYTE_PTR, [ECX, 0x1F], 0)
+		];
+		dest = ECX;
+		addr = Exe.FindHex(parts);
+		if (addr > 0)
+			refAddrs = MapAddrs(addr, parts);
+	}
+
+	// spopup
+	if (addr < 0 && ROC.FullVer == 14.29 && _ === 'CustomspopupLub')
+	{
+		let localPtr = [EBP, WCn];
+		const parts =
+		[
+			PUSH(0x20)
+		+	MOV(localPtr, 0xF)
+		+	MOV(BYTE_PTR, localPtr, 0)
+		+	CALL(ALLWC),
+
+			MOVUPS(XMM0, [nameAddr]),
+
+			MOV(localPtr, 0x11)
+		+	MOV(localPtr, 0x1F),
+
+			MOVUPS([EAX], XMM0)
+		+	MOV(CL, [nameAddr + 0x10])
+		+	MOV(BYTE_PTR, [EAX, 0x10], CL)
+		+	MOV(BYTE_PTR, [EAX, 0x11], 0)
+		];
+		dest = EAX;
+		addr = Exe.FindHex(parts);
+		if (addr > 0)
+			refAddrs = MapAddrs(addr, parts);
+	}
+
+	const isQuestQuali = (_ === 'CustomQuestQualiLub');
+	if (addr < 0 && isQuestQuali)
+	{
+		const nameCandidates = [
+			"System\\QuestClassificationInfo.lub"
+		];
+		let strAddr = -1;
+		for (const s of nameCandidates)
+		{
+			strAddr = Exe.FindText(s, CASE_INSENSITIVE);
+			if (strAddr > 0) break;
+			strAddr = Exe.FindText(s.replace("/", "\\"), CASE_INSENSITIVE);
+			if (strAddr > 0) break;
+		}
+		if (strAddr < 0)
+			throw Error("'System\\QuestClassificationInfo.lub' not found");
+
+		const aLoad1 = Exe.FindHex(MOVUPS(XMM0, [strAddr]));
+		if (aLoad1 < 0)
+			throw Error("QuestQuali: MOVUPS XMM0,[str] not found");
+
+		const searchFrom = aLoad1;
+		const searchTo   = aLoad1 + 0x80;
+		const storePats = [
+			MOVUPS([EAX], XMM0), // 0F 11 00
+			MOVDQU ? MOVDQU([EAX], XMM0) : null,
+			MOVAPS ? MOVAPS([EAX], XMM0) : null
+		].filter(Boolean);
+
+		let aStore1 = -1;
+		for (const pat of storePats) {
+			const pos = Exe.FindHex(pat, searchFrom, searchTo);
+			if (pos > 0) { aStore1 = pos; break; }
+		}
+		if (aStore1 < 0)
+			throw Error("QuestQuali: first store [EAX],XMM0 not found near load");
+
+		let term = MOV(BYTE_PTR, [EAX, 0x22], 0);
+		let termAt = Exe.FindHex(term, aStore1, aStore1 + 0x200);
+		if (termAt < 0) {
+			term = MOV(BYTE_PTR, [EAX, 0x24], 0);
+			termAt = Exe.FindHex(term, aStore1, aStore1 + 0x200);
+		}
+		if (termAt < 0)
+			throw Error("QuestQuali: terminator write not found");
+
+		const cutFrom = aStore1;
+		const cutTo   = termAt + term.byteCount();
+
+		refAddrs = ['HOOK_QUESTQUALI_TAIL', cutFrom, cutTo];
+		dest = EAX;
+	}
+
+	if (addr < 0 && !isQuestQuali)
+		throw Error(`'${name} not used`);
+
+	$$(_, 1.4, `Get the new file name from user`);
+	const suf = strType === "Prefix" ? "without .lub" : "";
+	const newStr = Exe.GetUserInput(
+		varName, D_Text, `File ${strType}`,
+		`Enter the new <b>${prefix} ${strType}</b> (relative to RO folder) ${suf}`,
+		name, {minLen: 1, maxLen: 64}
+	);
+	if (newStr === false)
+		Cancel(strType, name);
+
+	$$(_, 2.1, `Add the file name`);
+	const [, freeVir] = Exe.AddFromVar(varName);
+
+
+	if (refAddrs == undefined)
+	{
+		$$(_, 2.2, `Update the PUSHed address`);
+		Exe.SetUint32(addr + 1, freeVir);
+	}
+
+	else if (_ == 'CustomPrivAirplaneLub')
+	{
+		let dsize = newStr.length, offset = 0, code = '';
+		[
+			[0x10, MOVUPS, XMM0],
+			[0x08, MOVQ,   EAX],
+			[0x04, MOV,    EAX],
+			[0x01, MOV,    AL ]
+		].forEach(([fsize, cmd, reg]) =>
+		{
+			let nextOff = offset + fsize;
+			while (nextOff <= dsize) {
+				code += cmd(reg, [freeVir + offset])
+				     + cmd([ECX, offset], reg);
+				offset = nextOff;
+				nextOff += fsize;
+			}
+		});
+		code += MOV(BYTE_PTR, [ECX, offset], 0)
+		      + JMP(Filler(1));
+
+		Exe.SetInt8(refAddrs[0] + 1, newStr.length + 1);
+		Exe.SetNOPs(refAddrs[1], refAddrs[2] - refAddrs[1]);
+		AutoHook(refAddrs[3], code, { targets: {1: Exe.Phy2Vir(refAddrs[4], CODE)} });
+	}
+
+	else if (_ == 'CustomspopupLub')
+	{
+		let dsize = newStr.length, offset = 0, code = '';
+		[
+			[0x10, MOVUPS, XMM0],
+			[0x08, MOVQ,   EDX],
+			[0x04, MOV,    EDX],
+			[0x01, MOV,    DL ]
+		].forEach(([fsize, cmd, reg]) =>
+		{
+			let nextOff = offset + fsize;
+			while (nextOff <= dsize) {
+				code += cmd(reg, [freeVir + offset])
+				     + cmd([EAX, offset], reg);
+				offset = nextOff;
+				nextOff += fsize;
+			}
+		});
+		code += MOV(BYTE_PTR, [EAX, offset], 0)
+		      + JMP(Filler(1));
+
+		Exe.SetInt8(refAddrs[0] + 1, newStr.length + 1);
+		Exe.SetNOPs(refAddrs[1], refAddrs[2] - refAddrs[1]);
+		AutoHook(refAddrs[3], code, { targets: {1: Exe.Phy2Vir(refAddrs[4], CODE)} });
+	}
+
+	else if (Array.isArray(refAddrs) && refAddrs[0] === 'HOOK_QUESTQUALI_TAIL')
+	{
+		const cutFrom = refAddrs[1];
+		const cutTo   = refAddrs[2];
+
+		let dsize = newStr.length, offset = 0, code = '';
+		[
+			[0x10, MOVUPS, XMM0, EAX],
+			[0x08, MOVQ,   EDX,  EAX],
+			[0x04, MOV,    EDX,  EAX],
+			[0x01, MOV,    DL,   EAX]
+		].forEach(([fsize, cmd, reg, dst]) =>
+		{
+			let nextOff = offset + fsize;
+			while (nextOff <= dsize) {
+				code += cmd(reg, [freeVir + offset])
+				     + cmd([dst, offset], reg);
+				offset = nextOff;
+				nextOff += fsize;
+			}
+		});
+
+		code += MOV(BYTE_PTR, [EAX, offset], 0) // NUL
+		      + JMP(Filler(1));
+
+		Exe.SetNOPs(cutFrom, cutTo - cutFrom);
+
+		AutoHook(cutFrom, code, {
+			targets: {1: Exe.Phy2Vir(cutTo, CODE)}
+		});
+	}
+
+	return true;
+};
+
+///
+/// \brief Common functions to validate
+///
+CustomPath.validate = function(_)
+{
+	let data = this.Data.get(_);
+
+	if ('parts' in data) //need to derive the name from parts and then find its address.
+	{
+		const [pref, sakSufs, mainSufs] = data.parts;
+		const sufs = Wrap(ROC.IsRenewal ? sakSufs : mainSufs);
+
+		const result = sufs.findAs( suf =>
+		{
+			let name = pref + suf;
+			let addr = Exe.FindText(name, CASE_INSENSITIVE);
+
+			if (addr < 0 && Exe.BuildDate > 20211000)
+			{
+				name = pref.replace("/", "\\") + suf;
+				addr = Exe.FindText(name, CASE_INSENSITIVE);
+			}
+
+			if (addr > 0)
+				return [name, addr];
+			else
+				return null;
+		});
+		if (result)
+		{
+			[data.name, data.nameAddr] = result;
+			return true;
+		}
+	}
+	else //name is provided directly
+	{
+		let name = data.knownName;
+		let addr = Exe.FindText(name, CASE_INSENSITIVE);
+
+		if (addr < 0 && Exe.BuildDate > 20211000)
+		{
+			name = name.replace("/", "\\");
+			addr = Exe.FindText(name, CASE_INSENSITIVE);
+		}
+		if (addr > 0)
+		{
+			data.nameAddr = addr;
+			data.name = name;
+			return true;
+		}
+	}
+
+	return false;
+};
+
+///
+/// Wrappers for Individual Patches
+///
+CustomDefaultBGM       = CustomPath;
+CustomItemInfoLub      = CustomPath;
+CustomAchieveLub       = CustomPath;
+CustomTownInfoLub      = CustomPath;
+CustomPetEvoClnLub     = CustomPath;
+CustomTipboxLub        = CustomPath;
+CustomCheckAttLub      = CustomPath;
+CustomPrivAirplaneLub  = CustomPath;
+CustomMapInfoLub       = CustomPath;
+CustomOngQuestInfoLub  = CustomPath;
+CustomRcmdQuestInfoLub = CustomPath;
+CustomMonSizeEffLub    = CustomPath;
+CustomspopupLub        = CustomPath;
+CustomChangeMatLub     = CustomPath;
+CustomQuestQualiLub    = CustomPath;
+CustomRuneDescLub      = CustomPath;
+CustomRuneSetDescLub   = CustomPath;
+CustomitemDecomLub     = CustomPath;
+CustomRuneInfoLub      = CustomPath;
+CustomRuneSetInfoLub   = CustomPath;
+CustomRuneSystemTableLub = CustomPath;
+CustomRuneSystemIdLub  = CustomPath;
+CustomRuneSystemInfoLub = CustomPath;
+CustomRuneRewardLub = CustomPath;
+
+///
+/// \brief Data to be used for the above patches
+///
+CustomPath.Data = MakeMap(
+	'CustomDefaultBGM',
+	{
+		strType : "Path",
+		varName : '$newBGMPath',
+		prefix : "Default BGM",
+		knownName : "bgm\\01.mp3"
+	},
+
+	'CustomItemInfoLub',
+	{
+		strType : "Path",
+		varName : '$newItemInfo',
+		prefix : "ItemInfo Lua",
+		parts : ["System/iteminfo", ["_Sak.lub", ".lub"], ["_true.lub", ".lub"]]
+	},
+
+	'CustomAchieveLub',
+	{
+		strType : "Path",
+		varName : '$newAchieveList',
+		prefix : "Achievement List Lua",
+		knownName : "system\\Achievement_list.lub"
+	},
+
+	'CustomMonSizeEffLub',
+	{
+		strType : "Path",
+		varName : '$newMonSizeEffect',
+		prefix : "Monster Size Effect Lua",
+		parts : ["System/monster_size_effect", ["_sak_new.lub", "_sak.lub", ".lub"], ["_new.lub", ".lub"]]
+	},
+
+	'CustomTownInfoLub',
+	{
+		strType : "Path",
+		varName : '$newTownInfo',
+		prefix : "Town Info Lua",
+		knownName : "System/Towninfo.lub"
+	},
+
+	'CustomPetEvoClnLub',
+	{
+		strType : "Path",
+		varName : '$newPetEvoCln',
+		prefix : "Pet Evolution Lua",
+		parts : ["system\\PetEvolutionCln", ["_sak.lub", ".lub"], ["_true.lub", ".lub"]]
+	},
+
+	'CustomTipboxLub',
+	{
+		strType : "Path",
+		varName : '$newTipBox',
+		prefix : "Tip Box Lua",
+		knownName : "System/tipbox.lub"
+	},
+
+	'CustomCheckAttLub',
+	{
+		strType : "Path",
+		varName : '$newCheckAtt',
+		prefix : "Check Attendance Lua",
+		knownName : "System/CheckAttendance.lub"
+	},
+
+	'CustomPrivAirplaneLub',
+	{
+		strType : "Path",
+		varName : '$newPrivAirplane',
+		prefix : "Private Airplane Lua",
+		parts : ["System\\PrivateAirplane", "_Sakray.lub", "_True.lub"]
+	},
+
+	'CustomMapInfoLub',
+	{
+		strType : "Path",
+		varName : '$newMapInfo',
+		prefix : "MapInfo Lua",
+		parts : ["system\\mapInfo", "_sak.lub", "_true.lub"]
+	},
+
+	'CustomOngQuestInfoLub',
+	{
+		strType : "Prefix",
+		varName : '$newOngQInfoList',
+		prefix : "Ongoing QuestInfoList Lua",
+		parts : ["system\\OngoingQuestInfoList", "_Sakray", "_True"]
+	},
+
+	'CustomRcmdQuestInfoLub',
+	{
+		strType : "Prefix",
+		varName : '$newRcmdQInfoList',
+		prefix : "Recommended QuestInfoList Lua",
+		parts : ["system\\RecommendedQuestInfoList", "_Sakray", "_True"]
+	},
+
+	'CustomspopupLub',
+	{
+		strType : "Path",
+		varName : '$newspopup',
+		prefix : "spopup Lua",
+		knownName : "System\\spopup.lub"
+	},
+
+	'CustomChangeMatLub',
+	{
+		strType : "Path",
+		varName : '$newchangemat',
+		prefix : "ChangeMaterial Lua",
+		knownName : "System/ChangeMaterial.lub"
+	},
+
+	'CustomQuestQualiLub',
+	{
+		strType : "Path",
+		varName : '$newQuestQuali',
+		prefix : "QuestClassificationInfo Lua",
+		knownName : "System\\QuestClassificationInfo.lub"
+	},
+
+	'CustomRuneDescLub',
+	{
+		strType : "Path",
+		varName : '$newRuneDesc',
+		prefix : "rune_desc Lua",
+		knownName : "System\\Rune\\rune_desc.lub"
+	},
+
+	'CustomRuneSetDescLub',
+	{
+		strType : "Path",
+		varName : '$newRuneSetDesc',
+		prefix : "runeset_desc Lua",
+		knownName : "System\\Rune\\runeset_desc.lub"
+	},
+
+	'CustomitemDecomLub',
+	{
+		strType : "Path",
+		varName : '$newitemDecom',
+		prefix : "itemDecom Lua",
+		knownName : "System\\Rune\\itemDecom.lub"
+	},
+
+	'CustomRuneInfoLub',
+	{
+		strType : "Path",
+		varName : '$newruneinfo',
+		prefix : "rune_info Lua",
+		knownName : "System\\Rune\\rune_info.lub"
+	},
+
+	'CustomRuneSetInfoLub',
+	{
+		strType : "Path",
+		varName : '$newrunesetinfo',
+		prefix : "runeset_info Lua",
+		knownName : "System\\Rune\\runeset_info.lub"
+	},
+
+	'CustomRuneSystemTableLub',
+	{
+		strType : "Path",
+		varName : '$newruneSystable',
+		prefix : "runeSystem_table Lua",
+		knownName : "System\\Rune\\runeSystem_table.lub"
+	},
+
+	'CustomRuneSystemIdLub',
+	{
+		strType : "Path",
+		varName : '$newrunesysid',
+		prefix : "runesystemid Lua",
+		knownName : "System\\Rune\\runesystemid.lub"
+	},
+
+	'CustomRuneSystemInfoLub',
+	{
+		strType : "Path",
+		varName : '$newrunesysInfo',
+		prefix : "runesystemInfo Lua",
+		knownName : "System\\Rune\\runesystemInfo.lub"
+	},
+	'CustomRuneRewardLub',
+	{
+		strType : "Path",
+		varName : '$newrunerewInfo',
+		prefix : "runeset_reward Lua",
+		knownName : "System\\Rune\\runeset_reward.lub"
+	},
+);
+
+///
+/// \brief Change the "..\\licence.txt" & the EULA error string reference to user specified file
+///
+Orig_LicTxt = "..\\licence.txt";
+CustomLicenseTxt = function(_)
+{
+	$$(_, 1.1, `Find the string '..\\licence.txt'`)
+	let addr = Exe.FindText(Orig_LicTxt, CASE_INSENSITIVE);
+	if (addr < 0)
+		throw Error(`'${Orig_LicTxt}' not found`);
+
+	$$(_, 1.2, `Find where it is assigned`)
+	addr = Exe.FindHex( MOV([POS4WC], addr) ); //MOV DWORD PTR DS:[g_licence], stringAddr
+	if (addr < 0)
+		throw Error(`'${Orig_LicTxt}' not assigned`);
+
+	$$(_, 2.1, `Get new Filename from user`)
+	const varName = '$licenseTXT';
+	const newFile = Exe.GetUserInput(varName, D_Text, "License file", "Enter the name of the Txt file", Orig_LicTxt, {minLen: 9, maxLen: 14});
+	if (newFile === false)
+		Cancel("License file", Orig_LicTxt);
+
+	$$(_, 2.2, `Add the new file name`)
+	let [, freeVir] = Exe.AddFromVar(varName);
+
+	$$(_, 2.3, `Change the address in the assignment`)
+	Exe.SetInt32(addr + 6, freeVir);
+
+	$$(_, 3.1, `Find EULA string`)
+	const strAddr = Exe.FindText("No EULA text file. (licence.txt)");
+	if (strAddr < 0)
+		throw Error("EULA string not found");
+
+	$$(_, 3.2, `Prepare the new EULA error string using the filename received`)
+	const eulaString = "No EULA text file. (" + newFile.replace("..\\", "") + ")";
+	
+	$$(_, 3.3, `Add the new ELA error string`);
+	[, freeVir] = Exe.AddText(eulaString);
+
+	$$(_, 3.5, `Update all PUSHes & assigments using the original EULA error string`)
+	const found = [
+		PUSH(0x20) + PUSH(strAddr),
+		JMP(0x10) + PUSH(strAddr),
+		CMOVAE(R32, [POS4WC]) + PUSH(strAddr), 
+		MOV(ESI, strAddr),
+		MOV(EDI, strAddr)
+	].filter( code =>
+	{
+		const addrs = Exe.FindHexN(code);
+		if (addrs.isEmpty())
+			return false;
+
+		const csize = code.byteCount();
+		for (const addr of addrs)
+			Exe.SetInt32(addr + csize - 4, freeVir);
+
+		return true;
+	});
+
+	if (found.isEmpty())
+		throw Error("No EULA references found");
+
+	if (ROC.FullVer == 14.29)
+	{
+		$$(_, 4.1, `Look for the assignment using XMM0 for latest clients`)
+		let parts =
+		[
+			MOVUPS(XMM0, [strAddr])         //movups xmm0, dqword ptr [strAddr]
+		,
+			MOVUPS([EAX], XMM0)             //movups dqword ptr [eax], xmm0
+		+	MOVUPS(XMM0, [strAddr + 0x10])  //movups xmm0, dqword ptr [strAddr + 10h]
+		,
+			MOVUPS([EAX, 0x10], XMM0)       //movups dqword ptr [eax + 10h], xmm0
+		,
+			MOV(BYTE_PTR, [EAX, 0x20], 0)   //mov byte ptr [eax + 20h], 0
+		];
+		addr = Exe.FindHex(parts);
+		if (addr < 0)
+			throw Error("New EULA reference missing");
+		
+		$$(_, 4.2, `Replace the string references and update the null pointer offset in the code`)
+		const [,mov1, mov2, , mov3] = MapAddrs(addr, parts);
+		Exe.SetInt32(mov1 - 4, freeVir);
+		Exe.SetInt32(mov2 - 4, freeVir + 0x10);
+		if (eulaString.length < 31)
+			Exe.SetInt8(mov3 - 2, eulaString.length + 1);
+	}
+
+	return true;
+};
+
+///
+/// \brief Change the clientinfo.xml reference to custom file specified by user
+///
+CustomClientInfo = function(_)
+{
+	$$(_, 1.1, `Ensure the DGRF object is loaded`)
+	DGRF.load();
+
+	$$(_, 1.2, `Retrieve the refAddr (PUSH location) & calculate the end address`)
+	const fromAddr = DGRF.RefAddr;
+	const toAddr = fromAddr + 0x100; //may not need this much
+
+	$$(_, 1.3, `Find where the XML is referenced`)
+	const nameAddr = ROC.ClInfoAddr;
+
+	let patterns;
+	if (Exe.Version > 10.0) //VC11+
+	{
+		patterns = [
+			MOVQ(XMM$, [nameAddr]),  //movq xmmA, qword ptr [nameAddr]
+			MOVUPS(XMM$, [nameAddr]) //movups xmmA, dword ptr [nameAddr]
+		];
+	}
+	else
+	{
+		patterns = [
+			MOV(R32, [nameAddr]), //mov regA, dword ptr [nameAddr]
+			MOV(EAX, [nameAddr]), //mov eax, dword ptr [nameAddr]
+			MOV(R32, nameAddr)    //mov regA, <nameAddr>
+		];
+	}
+
+	const result = patterns.findAs( (pat, index) =>
+	{
+		const found = Exe.FindHex(pat, fromAddr, toAddr);
+		if (found > 0)
+			return [found + pat.byteCount() - 4, index < patterns.length - 1]; //first element is the position of the nameAddr, second indicates there are more addresses for replacement
+	});
+
+	if (!result)
+		throw Error("clientinfo not used");
+
+	const [addr, hasMore] = result;
+
+	$$(_, 1.4, `Add the address & displacement offset to repLocs`)
+	let repLocs = new Map();
+	repLocs.set(0, addr);
+
+	$$(_, 1.5, `Find the additional references & save the locations where replacement need to be made`)
+	if (hasMore)
+	{
+		let has4th = true;
+		if (Exe.Version > 10.0)//VC11+
+		{
+			if (ROC.ClientInfo === "sclientinfo.xml")
+			{
+				let addr = Exe.FindHex(MOVSS(XMM$, [nameAddr + 8]), fromAddr, toAddr); //movss xmmA, qword ptr [nameAddr + 8]
+				if (addr < 0)
+				{
+					has4th = false; //already takes care of the 4th part because 8 bytes are retrieved
+					addr = Exe.FindHex(MOVQ(XMM$, [nameAddr + 8]), fromAddr, toAddr); //movq xmmA, qword ptr [nameAddr + 8]
+				}
+				if (addr < 0)
+					throw Error("2nd reference missing");
+
+				repLocs.set(8, addr + 4);
+			}
+			else
+			{
+				let addr = Exe.FindHex(MOV(EAX, [nameAddr + 8]), fromAddr, toAddr); //mov eax, dword ptr [nameAddr + 8]
+				if (addr < 0)
+					throw Error("2nd reference missing");
+
+				repLocs.set(8, addr + 1);
+
+				addr = Exe.FindHex(MOV(AX, [nameAddr + 0xC]), fromAddr, toAddr); //mov ax, word ptr [nameAddr + 0Ch]
+				if (addr < 0)
+					throw Error("3rd reference missing");
+
+				repLocs.set(0xC, addr + 2);
+			}
+		}
+		else
+		{
+			[4, 8, 0xC].forEach( (disp, idx) =>
+			{
+				let addr = Exe.FindHex(MOV(R32, [nameAddr + disp]), fromAddr, toAddr); //mov regB, dword ptr [nameAddr + disp]
+				let offset = 2;
+
+				if (addr < 0)
+				{
+					addr = Exe.FindHex(MOV(EAX, [nameAddr + disp]), fromAddr, toAddr); //mov eax, dword ptr [nameAddr + disp]
+					offset = 1;
+				}
+				if (addr < 0)
+					throw Error("Reference no." + (idx + 2) + " missing");
+
+				repLocs.set(disp, addr + offset);
+			});
+		}
+
+		if (has4th)
+		{
+			let addr = Exe.FindHex(MOV(AL, [nameAddr + 0xE]), fromAddr, toAddr); //mov al, byte ptr [nameAddr + 0Eh]
+			let offset = 1;
+
+			if (addr < 0)
+			{
+				addr = Exe.FindHex(MOV(R8, [nameAddr + 0xE]), fromAddr, toAddr); //mov reg8A, byte ptr [nameAddr + 0Eh]
+				offset = 2;
+			}
+			if (addr < 0)
+				throw Error("4th reference missing");
+
+			repLocs.set(0xE, addr + offset);
+		}
+	}
+
+	$$(_, 2.1, `Get the new name from the user`)
+	const varName = '$newclientinfo';
+	const newFile = Exe.GetUserInput(varName, D_Text, "Client Info XML", "Enter the new clientinfo path", ROC.ClientInfo, {minLen: 9, maxLen: 20});
+	if (newFile === false)
+		Cancel("Filename", ROC.ClientInfo);
+
+	$$(_, 2.2, `Add the new name`)
+	const [, freeVir] = Exe.AddFromVar(varName);
+
+	$$(_, 2.3, `Adjust the references`)
+	for (const [disp, addr] of repLocs)
+		Exe.SetUint32(addr, freeVir + disp);
+
+	return true;
+};
+
+///
+/// \brief Disable for Unsupported clients
+///
+CustomClientInfo.validate = () =>
+	 ROC.ClInfoAddr > 0;

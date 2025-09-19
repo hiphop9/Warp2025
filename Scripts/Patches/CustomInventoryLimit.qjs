@@ -1,0 +1,89 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2018-2024 CH.C (jchcc)                                   *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : CH.C (jchcc), Neo-Mind                                 *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+// TODO - Not working for clients before 2017. Can't find the /%d in there either.
+//        Also fix the coloring for the prefix when it reaches 100
+
+///
+/// \brief Find the max item count display for inventory & replace with user specified value
+///
+CustomInventoryLimit = function(_)
+{
+	$$(_, 1, `Find the locations where the /%d string is referenced`)
+	let code;
+	if (Exe.Version > 11) //VC14.16
+	{
+		code =
+			LEA(EAX, [EBP, WC])	//lea eax, [LOCAL.x]
+		+	ADD(R32, 0x64)	    //add regA, 64h ; regA can be eax or ecx
+		+	PUSH_R   		    //push regA
+		+	PUSH(POS3WC)	    //push offset "/%d"
+		;
+	}
+	else if (Exe.BuildDate > 20181128) //VC11 newer
+	{
+		code =
+			ADD(R32, 0x64)	    //add regA, 64h ;regA can be EAX or ECX
+		+	PUSH_R   		    //push regA
+		+	LEA(EAX, [EBP, WC])	//lea eax, [LOCAL.x]
+		+	PUSH(POS3WC)	    //push offset "/%d"
+		;
+	}
+	else if (Exe.BuildDate > 20170000) //VC11 older
+	{
+		code =
+			PUSH(0x64)			//push 64h
+		+	LEA(EAX, [EBP, WC])	//lea eax, [LOCAL.x]
+		+	PUSH(POS3WC)		//push offset "/%d"
+		;
+	}
+	else
+	{
+		Cancel("No valid pattern known for older clients");
+	}
+
+	const addrs = Exe.FindHexN(code);
+	if (addrs.isEmpty())
+		throw Error("Item count function missing");
+
+	$$(_, 2.1, `Retrieve the new value from user`)
+	const val = Exe.GetUserInput('$MaxItemCount', D_Uint32, "Limit Input", "Enter the max item count", 100, {max: 999});
+	if (val === true)
+		Cancel("Max Count", 100);
+
+	$$(_, 2.2, `Add the new string`)
+	const [free, freeVir] = Exe.AddText("/" + val);
+
+	$$(_, 2.3, `Replace all the references`)
+	const offset = code.byteCount() - 4;
+	for (const matchAddr of addrs)
+		Exe.SetInt32(matchAddr + offset, freeVir);
+
+	return true;
+};

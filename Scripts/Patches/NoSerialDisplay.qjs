@@ -1,0 +1,76 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) ?-2015 Shinryo                                           *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Shinryo, Neo-Mind                                      *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Modify the Serial No. Display function to skip showing it
+///
+NoSerialDisplay = function(_)
+{
+	$$(_, 1, `Find the comparison in the function`)
+	let prefix =
+		ADD(EAX, WCp)        //add eax, imm8A
+	;
+	const suffix =
+		CMP(EAX, [ECX, WCp]) //cmp eax, dword ptr [ecx + disp8A]
+	+	JL(POS1WC)           //jl _proceed
+	+	PUSH(ESI)            //push esi
+	;
+
+	let addr = Exe.FindHex(prefix + suffix);
+
+	if (addr < 0 && Exe.BuildDate > 20180000)
+	{
+		prefix +=
+			SUB(ESP, WCp)    //sub esp, imm8B
+		;
+		addr = Exe.FindHex(prefix + suffix);
+	}
+	
+	if (addr < 0)
+		throw Error("Comparison not found");
+
+	$$(_, 2, `Overwrite ADD and CMP statements with code for setting EAX = 0`)
+	$$(_, 2, `Since EAX is 0, the JL will always Jump`)
+	Exe.SetHex(addr,
+		NOP                  //nop
+	+   XOR(EAX, EAX)        //xor eax, eax
+	);
+
+	Exe.SetHex(addr + prefix.byteCount(),
+		CMP(EAX, 1)          //cmp eax, 1
+	);
+
+	return true;
+};
+
+///
+/// \brief Disable for old clients & temporarily for latest clients
+///
+NoSerialDisplay.validate = () =>
+	Exe.BuildDate > 20101116 && (Exe.Version < 14 || Exe.MinorVer < 20);

@@ -1,0 +1,44 @@
+############################################################################
+#                                                                          #
+#   Copyright (C) 2020-2023 Neo-Mind                                       #
+#                                                                          #
+#   This file is a part of WARP project (specific to RO clients)           #
+#                                                                          #
+#   WARP is free software: you can redistribute it and/or modify           #
+#   it under the terms of the GNU General Public License as published by   #
+#   the Free Software Foundation- either version 3 of the License- or      #
+#   (at your option) any later version.                                    #
+#                                                                          #
+#   This program is distributed in the hope that it will be useful-        #
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of         #
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          #
+#   GNU General Public License for more details.                           #
+#                                                                          #
+#   You should have received a copy of the GNU General Public License      #
+#   along with this program.  If not- see <http://www.gnu.org/licenses/>.  #
+#                                                                          #
+#                                                                          #
+############################################################################
+#                                                                          #
+#   Author(s)     : Neo-Mind                                               #
+#   Created Date  : 2020-11-11                                             #
+#   Last Modified : 2020-12-10                                             #
+#                                                                          #
+############################################################################
+
+# The array should contain the set of MsgString Line numbers corresponding to 
+# Job Names that needs to be skipped while loading the Party Booking Window.
+# Msg String Line Numbers 1630-1688 are the Job Names.
+# As an example we have skipped over the entire Archer branch
+
+- 1632 #Archer 
+- 1640 #Hunter
+- 1647 #Bard
+- 1648 #Dancer
+- 1651 #Ranger
+- 1657 #Minstrel
+- 1658 #Wanderer
+- 1664 #High Archer
+- 1672 #Sniper
+- 1679 #Clown
+- 1680 #Gypsy

@@ -1,0 +1,184 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2021-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144)                                          *
+*   Created Date  : 2021-10-01                                             *
+*   Last Modified : 2024-08-12	                                           *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Data to be used for MessageBox patches
+///
+MB_Types =
+{
+	INFO_ASTERISK    : 0x40,
+	WARN_EXCLAMATION : 0x30,
+	QUESTION         : 0x20,
+	ERROR_STOP       : 0x10,
+	OK_DEFAULT       : 0x00,
+	SIMPLE_BEEP      : 0xFFFFFFFF
+};
+
+///
+/// \brief Changes MessageBoxA calls to custom function which calls MessageBeep instead.
+///
+MsgBox2Beep = function(_)
+{
+	$$(_, 1, `Find references of  MessageBoxA function`)
+	const {refAddrs} = GetImpRefs("MessageBoxA");
+	if (refAddrs == undefined)
+		throw Error("MessageBoxA not used");
+
+	$$(_, 2.1, `Get the beep type from user`)
+	const key = Exe.GetUserInput('$beepType', D_Choice, "MessageBox Change", "Enter the beep type expected", 'OK_DEFAULT', {choices: Object.getOwnPropertyNames(MB_Types), saveDefault: true});
+	if (key === false)
+		Cancel("MessageBox reverted");
+
+	$$(_, 2.2, `Construct the replacement function`)
+	const parts =
+	[//0
+		Filler(1)                  //points to function below
+
+	,//1
+		ALL00                      //; beepFnAddr
+
+	,//2
+		MOV(EAX, [Filler(2)])      //mov eax, dword ptr [beepFnAddr]
+	+	TEST(EAX, EAX)             //test eax, eax
+	+	JNZ(Filler(3,1))           //jnz short _loaded
+	+	PUSH_STR("USER32.dll")     //push "USER32.dll" + jmp
+	+	CALL([ROC.GetModHandle])   //call dword ptr [<&KERNEL32.GetModuleHandle>]
+	+	PUSH_STR("MessageBeep")    //push "MessageBeep" + jmp
+	+	PUSH_EAX                   //push eax
+	+	CALL([ROC.GetProcAddr])    //call dword ptr [<&KERNEL32.GetProcAddress>]
+	+	MOV([Filler(2)], EAX)      //mov dword ptr [beepFnAddr], eax
+
+	,//3
+		PUSH(MB_Types[key])        //push <beepType> ; _loaded
+	+	CALL(EAX)                  //call eax ; [USER32.MessageBeep]
+	+	XOR(EAX, EAX)              //xor eax, eax
+	+	INC(EAX)                   //inc eax
+	+	RETN(0x10)                 //retn 10h
+	];
+	const [, beepFnAddr, newFnAddr, _loaded, allocSize] = MapAddrs(parts);
+
+	$$(_, 2.3, `Prepare the arguments for auto-hook`)
+	const args =
+	{
+		allocSize,
+		localVals : {
+			1 : newFnAddr,
+			2 : beepFnAddr
+		},
+		localTgts : {
+			'3,1' : _loaded
+		},
+		isPtr : true
+	};
+
+	$$(_, 2.4, `Add our code and update the references`)
+	AutoHook(refAddrs, parts, args);
+
+	return true;
+};
+
+///
+/// \brief Changes the calls to MessageBoxA to a custom function which changes the 4th argument to incorporate the icon needed.
+///
+ShowMsgIcon = function(_)
+{
+	$$(_, 1, `Find references of  MessageBoxA function`)
+	const {refAddrs} = GetImpRefs("MessageBoxA");
+	if (refAddrs == undefined)
+		throw Error("MessageBoxA not used");
+
+	$$(_, 2.1, `Get the icon type from user`)
+	const choices = Object.getOwnPropertyNames(MB_Types).filter(v => v !== "SIMPLE_BEEP");
+	const key = Exe.GetUserInput('$msgIconType', D_Choice, "MessageBox Change", "Enter the beep type expected", 'OK_DEFAULT', {choices});
+	if (key === false)
+		Cancel("MessageBox reverted");
+
+	$$(_, 2.2, `Construct the new function`)
+	const code =
+		Filler(1)               // ; points to function below
+	+	MOV(EAX, [ESP, 0x10])   //mov eax, dword ptr [ARG.4]
+	+	AND(EAX, ~0x70)         //and eax, FFFFFF8Fh ; masking off
+	+	OR(EAX, MB_Types[key])  //or eax, <msgIconType>
+	+	MOV([ESP, 0x10], EAX)   //mov dword ptr [ARG.4], eax
+	+	JMP([ROC.MsgBoxA])      //jmp dword ptr [<&USER32.MessageBoxA>]
+	;
+
+	$$(_, 2.3, `Prepare the arguments for auto-hook`)
+	const args =
+	{
+		localVals : {
+			1 : 4 //fnAddr
+		},
+		isPtr : true
+	};
+
+	$$(_, 2.4, `Add the code and update the references`)
+	AutoHook(refAddrs, code, args);
+
+	return true;
+};
+
+///
+/// \brief Changes the calls to MessageBoxA to simply return without doing anything
+///
+NoMsgBox = function(_)
+{
+	if (!Warp.TestMode)
+	{
+		$$(_, 1.1, `Deactivate all the "Ignore*Error" patches`)
+		for (const name of ["IgnoreRsrcErr", "IgnorePalErr", "IgnoreQuestErr", "IgnoreLuaErr", "IgnoreEntryQueueErr"])
+			Warp.SetPatchState(name, false);
+	}
+
+	$$(_, 1.2, `Find references of  MessageBoxA function`)
+	const {refAddrs} = GetImpRefs("MessageBoxA");
+	if (refAddrs == undefined)
+		throw Error("MessageBoxA not used");
+
+	$$(_, 2.1, `Prepare the new function`)
+	const code =
+		Filler(1)     // ; points to function below
+	+	XOR(EAX, EAX) //xor eax, eax
+	+	INC(EAX)      //inc eax
+	+	RETN(0x10)    //retn 10h
+	;
+
+	$$(_, 2.2, `Prepare the arguments for auto-hook`)
+	const args =
+	{
+		localVals : {
+			1 : 4 //fnAddr
+		},
+		isPtr : true
+	};
+
+	$$(_, 2.3, `Add the code and update the references`)
+	AutoHook(refAddrs, code, args);
+
+	return true;
+};

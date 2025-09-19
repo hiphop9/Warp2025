@@ -1,0 +1,108 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2018-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Andrei (4144)                                          *
+*   Created Date  : 2021-06-15                                             *
+*   Last Modified : 2024-08-14                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the 'version' address being used and set up our own flag at the new address
+///
+SendClientFlags = function(_)
+{
+	if (!CACHE.has('SCF_Addrs_R'))
+	{
+		$$(_, 1.1, `Locate 'langtype' anchor`)
+		let at = Exe.FindText("langtype");
+		if (at < 0) throw Error("'langtype' not found");
+
+		$$(_, 1.2, `Find PUSH 'langtype' then MOV ECX, r32`)
+		at = Exe.FindHex(PUSH(at) + MOV(ECX, R32));
+		if (at < 0) throw Error("'langtype' not PUSHed");
+
+		$$(_, 1.3, `Backtrack to g_version store (mov [imm32], eax)`)
+		let verSet = Exe.FindLastHex(MOV([POS4WC], EAX), at, at - 0x40);
+		if (verSet < 0) {
+			// fallback encodings
+			verSet = Exe.FindLastHex("A3 ?? ?? ?? ??", at, at - 0x60) /* mov [imm32], eax */ ;
+			if (verSet < 0) verSet = Exe.FindLastHex("89 05 ?? ?? ?? ??", at, at - 0x60) /* mov dword ptr [imm32], eax */ ;
+		}
+		if (verSet < 0) throw Error("version address not assigned");
+
+		$$(_, 1.4, `Extract g_version absolute address`)
+		const versionAddr = Exe.GetInt32(verSet + 1);
+		if (!versionAddr) throw Error("failed to read version address");
+
+		$$(_, 1.5, `Collect all MOV r32, [g_version] read sites (any r32, any encoding)`)
+		const SCF_Addrs_R = new Set();
+
+		// Helper to pack U32 to hex
+		function P32(u) {
+			const b0=(u>>>0)&0xFF, b1=(u>>>8)&0xFF, b2=(u>>>16)&0xFF, b3=(u>>>24)&0xFF;
+			return [b0,b1,b2,b3].map(b=>b.toString(16).padStart(2,"0")).join(" ").toUpperCase();
+		}
+
+		// mov eax, [imm32] (A1 moffs32)
+		for (const a of Exe.FindHexN("A1 " + P32(versionAddr))) SCF_Addrs_R.add(a);
+
+		// mov r32, [imm32] (8B /r, mod=00, r/m=101 disp32). Try reg = 000..111.
+		for (const r of [0,1,2,3,5,6,7]) { // skip ESP(4) which is invalid dst here
+			const modrm = (r << 3) | 0x05; // 00 | (reg<<3) | 101b
+			const sig = "8B " + modrm.toString(16).padStart(2, "0").toUpperCase() + " " + P32(versionAddr);
+			for (const a of Exe.FindHexN(sig)) SCF_Addrs_R.add(a);
+		}
+
+		if (SCF_Addrs_R.size < 1)
+			throw Error("No version address references found");
+
+		CACHE.put('SCF_Addrs_R', SCF_Addrs_R);
+		CACHE.put('SCF_VerAddr_R', versionAddr);
+	}
+
+	$$(_, 2.1, `Allocate & compose flags`)
+	const flagValue =
+		(0x80000000 >>> 0) |
+		((Warp.GetPatchState("PreviewInShop")   ? 1 : 0) >>> 0) |
+		((Warp.GetPatchState("PreviewInDealer") ? 2 : 0) >>> 0);
+
+	const [, flagAddr] = Exe.AddUint32(flagValue);
+
+	$$(_, 2.2, `Rewrite immediates at read sites`)
+	let patched = 0;
+	for (const addr of CACHE.get('SCF_Addrs_R'))
+	{
+		const ins = Instr.FromAddr(addr);
+		// For both forms (A1 imm32) and (8B .. disp32), the immediate/disp32 begins at (NextAddr - 4)
+		Exe.SetInt32(ins.NextAddr - 4, flagAddr);
+		patched++;
+	}
+
+	// Defensive fallback: if nothing was rewritten, write into original g_version storage directly
+	if (patched === 0) {
+		const verAddr = CACHE.get('SCF_VerAddr_R');
+		Exe.SetInt32(verAddr, flagValue);
+	}
+
+	return true;
+};

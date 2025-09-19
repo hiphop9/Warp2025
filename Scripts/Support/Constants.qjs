@@ -1,0 +1,108 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-10-29                                             *
+*   Last Modified : 2024-08-07                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Common strings
+///
+if (typeof YMLFILTER === 'undefined')  //avoid redefinition
+{
+	//filter to use with D_InFile for YAML input files
+	AssignStr('YMLFILTER', "YAML Files (*.yml;*.yaml)");
+}
+
+///
+/// \brief Common error messages
+///
+if (typeof NO_OUTPUT === 'undefined') //avoid redefinition
+{
+	//used as error message after Exe.FileSize===0 in extensions
+	Assign('NO_EXE', 'new Error("No Valid Exe loaded")');
+
+	//used as error message for TextFile.Open & BinFile.Open failures in extensions
+	Assign('NO_OUTPUT', 'new Error("Unable to generate output file")');
+}
+
+///
+/// \brief Common hex codes
+///
+
+if (typeof WC === 'undefined') //avoid redefinition
+{
+	for (const [name, str] of
+	[
+		///
+		/// \brief The Basic wild cards
+		///
+		['WC' , " ??"], //Wild Card byte
+		['WCp', " [0.......]"], //Wild Card byte with +ve sign bit
+		['WCn', " [1.......]"], //Wild Card byte with -ve sign bit
+
+		///
+		/// \brief Some common patterns for a DWORD (32 bit)
+		///
+		['ALLWC' , " ?? ?? ?? ??"],
+		['ALLWCp', " ?? ?? ?? [0.......]"], //Only +ve sign bit is known
+		['ALLWCn', " ?? ?? ?? [1.......]"], //Only -ve sign bit is known
+
+		['ALL00' , " 00 00 00 00"], // 0 in 4 bytes
+		['POS1WC', " ?? 00 00 00"],
+		['POS2WC', " ?? ?? 00 00"],
+		['POS3WC', " ?? ?? ?? 00"],
+		['POS4WC', " ?? ?? ?? 0?"],
+
+		['ALLFF' , " FF FF FF FF"], //-1 in 4 bytes
+		['NEG1WC', " ?? FF FF FF"],
+		['NEG2WC', " ?? ?? FF FF"],
+		['NEG3WC', " ?? ?? ?? FF"],
+		['NEG4WC', " ?? ?? ?? F?"],
+
+		///
+		/// \brief Some common instructions
+		///
+		['PUSH_0'   , " 6A 00"],
+		['PUSH_1'   , " 6A 01"],
+		['PUSH_2'   , " 6A 02"],
+		['PUSH_R'   , " [01010...]"], //5? but with 4th bit 0
+		['PUSH_EAX' , " 50"],
+		['POP_R'    , " [01011...]"], //5? but with 4th bit 1
+		['POP_EAX'  , " 58"],
+		['FP_START' , " 55 8B EC"],   //push ebp followed by mov ebp, esp
+		['FP_STOP'  , " 8B E5 5D"],   //mov esp, ebp followed by pop ebp
+	])
+		AssignStr(name, str);
+
+	///
+	/// \brief Identify the OpCodeList
+	///
+	Identify("OpCodeList", [
+		"WithModRM", "WithImm8", "WithImm16",
+		"WithImm32", "WithDisp32", "SecWithoutModRM",
+		"SecWithImm8", "SecWithImm32", "TerWithImm8",
+		"FarType", "Reverse", "SecNonReverse"
+	], []);
+}

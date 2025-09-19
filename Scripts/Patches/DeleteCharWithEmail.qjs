@@ -1,0 +1,119 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2013-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind                                               *
+*   Created Date  : 2020-11-12                                             *
+*   Last Modified : 2024-08-09                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Change the conditional jump to JMP after Langtype Comparisons in Char Deletion function
+///        and the one which shows MsgBox. For recent clients a conditional MOV is used which needs to be NOPed
+///
+DeleteCharWithEmail = function(_)
+{
+	$$(_, 1.1, `Ensure the LANGTYPE is loaded`)
+	LANGTYPE.load();
+
+	$$(_, 1.2, `Find the Langtype comparison in Char Delete function (name not known right now)`)
+	let prefix =
+		MOV(EAX, [LANGTYPE]) //mov eax, dword ptr [g_serviceType]
+	+	ADD(ESP, 8)          //add esp, 8
+	+	CMP(EAX, 0xA)        //cmp eax, 0Ah
+	;
+
+	let suffix =
+		JE(WCp)              //je short _useEmail -> do the one for Email
+	+	CMP(EAX, 0xC)		 //cmp eax, 0Ch
+	+	JE(WCp)              //je short _useEmail -> do the one for Email
+	;
+
+	let addr = Exe.FindHex(prefix + suffix);
+	if (addr < 0 && Exe.BuildDate > 20170000)
+	{
+		prefix =
+			JMP(WCp)		 //jmp short _skip
+		+	CMP(R32, 0xA)	 //cmp regA, 0Ah
+		;
+
+		suffix =
+			JE(WCp)          //je short _useEmail -> do the one for Email
+		+	CMP(R32, 0xC)	 //cmp regA, 0Ch
+		+	JE(WCp)          //je short _useEmail -> do the one for Email
+		+	CMP(R32, 0x1)	 //cmp regA, 1
+		+	JE(WCp)          //je shorT _useEmail -> do the one for Email
+		;
+
+		addr = Exe.FindHex(prefix + suffix);
+	}
+	if (addr < 0)
+		throw Error("Langtype comparison not found");
+
+	$$(_, 1.3, `Enforce the first conditional jump`)
+	Exe.SetJMP(addr + prefix.byteCount());
+
+	if (Exe.Version <= 11) //VC6 - VC11
+	{
+		$$(_, 2.1, `Find the Langtype comparison for MsgBox String`)
+		const code =
+			PUSH_0       //push 0
+		+	JNE(7)       //jne short _skip
+		+	PUSH(POS2WC) //push 717h / 718h / 12Eh - the MsgString ID changes between clients
+		+	JMP(5)       //jmp short _showMsg -> CALL MsgStr
+
+		+	PUSH(0x12B)  //push 12Bh ; _skip
+
+		                 //_showMsg comes here
+		;
+
+		addr = Exe.FindHex(code);
+		if (addr < 0)
+			throw Error("2nd Langtype comparison not found");
+
+		$$(_, 2.2, `Change the conditional jump`)
+		Exe.SetJMP(addr + 2);
+	}
+	else //VC14.16
+	{
+		$$(_, 3.1, `Find the Langtype comparison for MsgBox String`)
+		prefix =
+			CMP([LANGTYPE], 0)  //cmp dword ptr [g_serviceType], 0
+		+	MOV(R32, 0x717)     //mov regB, 717h
+		+	MOV(R32, 0x12B)     //mov regA, 12Bh
+		;
+
+		suffix =
+			CMOVE(R32, R32)     //cmove regA, regB
+		+	PUSH_R              //push regA
+		;
+
+		addr = Exe.FindHex(prefix + suffix);
+		if (addr < 0)
+			throw Error("2nd Langtype comparison not found (VC14.16)");
+
+		$$(_, 3.2, `NOP out the Conditional MOV`)
+		Exe.SetNOPs(addr + prefix.byteCount(), 3);
+	}
+
+	return true;
+};
