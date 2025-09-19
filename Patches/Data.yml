@@ -86,11 +86,6 @@ CustomData:
             author : Shinryo , Secret
             desc : Ensures SelectKoreaClientInfo() is called along with SelectClientInfo() allowing you to use features that would be only visible on Korean Service Type.
         
-        - RestoreClientInfo:
-            title : Restore the use of clientinfo xml
-            recommend : no #will be changed to yes once fully tested
-            author : Neo-Mind
-            desc : Restores the code loading a clientinfo.xml file (name can be customized) while disabling the hardcoded server address.
         
         - DataFolderFirst:
             title : Read data folder first

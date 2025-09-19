@@ -61,12 +61,6 @@ CustomNW:
             recommend : no
             author : Ai4rei/AN , Neo-Mind
             desc : Ignores server-provided IP addresses when changing servers.
-                
-        - NoHardCodedIP:
-            title : Remove hardcoded HTTP IP
-            recommend : no
-            author : CH.C (jchcc)
-            desc : Remove hardcoded HTTP service ip address to prevent client from sending HTTP request to official server.
             
         - NoHardCodedAddr:
             title : Remove hardcoded address/port
