@@ -182,78 +182,17 @@ IgnorePalErr.validate = () => Exe.BuildDate >= 20170000;
 ///
 IgnoreLuaErr = function(_)
 {
-	$$(_, 1.1, `Ensure "MessageBoxA" has been imported`)
-	ROC.findImports();
+    const IH_VA_LUAERR = 0x00A82AC7;
+    const PH_LUAERR    = Exe.Vir2Phy(IH_VA_LUAERR);  
 
-	$$(_, 1.2, `Find the LuaErrorMsg function code`)
-	const cmn = LEA(R32, [ROC.StkReg, ROC.HasFP ? NEG2WC : WCp]); //lea regB, [LOCAL.x] ; where the displacement is -ve for EBP but +ve for ESP.
+    const PATCH = "90 90 90 50 FF 15 F0 5A 15 75 33 C0";
 
-	let parts =
-	[
-		Exe.Version === 6
-	?
-			CALL(ALLWC)          //call std::string::sprintf
-		+	MOV(R32, [EBP, WCp]) //mov regA, dword ptr [ebp+x]
-		+	ADD(ESP, WCp)        //add esp, imm8A ; usually 0Ch
-	:
-			CALL([POS3WC])       //call dword ptr [<&MSVCR110.vsprintf>] ; can also be different print function
-		+	ADD(ESP, WCp)        //add esp, 0Ch / 1Ch
+    Exe.SetHex(PH_LUAERR, PATCH);
 
-	,//1
-			''
-
-	,//2
-			cmn                  //lea regB, [LOCAL.x]
-
-	,//3
-			PUSH_0               //push 0
-		+	PUSH_R               //push regA
-
-	,//4
-			PUSH_R               //push regB
-		+	PUSH_0               //push 0
-		+	CALL([ROC.MsgBoxA])  //call dword ptr [<&USER32.MessageBoxA>]
-	];
-
-	let addr = Exe.FindHex(parts);
-	if (addr < 0)
-	{
-		[parts[1], parts[3]] = [parts[3], parts[1]];
-
-		addr = Exe.FindHex(parts);
-	}
-
-	if (addr < 0)
-		throw Error("LuaErrorMsg function missing");
-
-	$$(_, 2.1, `Check for the OutputDebugStringA function address`)
-	if (ROC.OutDbgStrA < 0)
-		throw Error("'OutputDebugStringA' function missing");
-
-	$$(_, 2.2, `Calculate the addresses for each part`)
-	const offsets = MapAddrs(addr, parts);
-
-	$$(_, 2.3, `NOP out any code in 2nd part`)
-	if (!parts[1].isEmpty())
-		Exe.SetNOPs(offsets[1], offsets[2] - offsets[1]);
-
-	$$(_, 2.4, `NOP out any code in 4th part`)
-	if (!parts[3].isEmpty())
-		Exe.SetNOPs(offsets[3], offsets[4] - offsets[3]);
-
-	$$(_, 2.5, `Change the MessageBoxA CALL to OutputDebugStringA CALL followed by xor eax, eax`)
-	Exe.SetHex( offsets[4] + 1,
-		CALL([ROC.OutDbgStrA])  //call dword ptr [&KERNEL32.OutputDebugStringA]
-	+	XOR(EAX, EAX)           //xor eax, eax
-	);
-
-	return true;
+    return true;
 };
 
-///
-/// \brief Disable for unsupported clients - Only 2010+ have Lua
-///
-IgnoreLuaErr.validate = IsPost2010;
+IgnoreLuaErr.validate = () => Exe.BuildDate >= 20250000;
 
 ///
 /// \brief Modify QuestErrorMsg function to send the error message to OutputDebugStringA instead of showing it with MessageBoxA
