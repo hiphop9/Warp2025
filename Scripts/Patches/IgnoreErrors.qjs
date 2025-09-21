@@ -88,135 +88,94 @@ IgnoreRsrcErr = function(_)
 ///
 IgnorePalErr = function(_)
 {
-	$$(_, 1.1, `Ensure IgnoreRsrcErr is not already ON (it would already be covered in that case)`)
-	if (!Warp.TestMode && Warp.GetPatchState("IgnoreRsrcErr"))
-		Cancel("'Ignore Resource Errors' is ON and covers Palette errors as well");
+	// Helper: convert 32-bit value to little-endian hex (for SSE imm32 patterns)
+	function ToHexLE32(val) {
+		let s = "";
+		for (let i = 0; i < 4; i++) {
+			const b = (val >>> (i * 8)) & 0xFF;
+			s += ("0" + b.toString(16)).slice(-2).toUpperCase();
+			if (i < 3) s += " ";
+		}
+		return s;
+	}
 
-	$$(_, 1.2, `Find the error message`)
+	$$(_, 1.1, "Find message text address");
 	const msgAddr = Exe.FindText("CPaletteRes :: Cannot find File : ");
 	if (msgAddr < 0)
 		throw Error("CPaletteRes string not found");
 
-	$$(_, 1.3, `Find where its PUSHed/assigned`)
-	let code = PUSH(msgAddr);  //PUSH OFFSET addr; ASCII "CPaletteRes :: Cannot find File : "
+	$$(_, 1.2, "Find a nearby reference to the message (PUSH/MOV/SSE)");
+	let ref = -1;
 
-	let addr = Exe.FindHex(code + LEA());   //lea ecx, [LOCAL.x]
-	if (addr < 0)
-		addr = Exe.FindHex(code + MOV([])); //mov dword ptr
+	// A) PUSH imm32
+	ref = Exe.FindHex(PUSH(msgAddr));
 
-	if (addr < 0)
-	{
-		code = MOV(EDI, msgAddr); //mov edi, offset "CPaletteRes :: Cannot find File : "
-		addr = Exe.FindHex(code);
-	}
-	if (addr < 0)
-		throw Error("CPaletteRes string not PUSHed/assigned");
-
-	$$(_, 2.1, `Find the CALL to CFile::Open and its result comparison before the PUSH (within 0x100 bytes)`)
-	code =
-		CALL(ALLWC)   //call CFile::Open
-	+	TEST(AL, AL)  //test al, al
-	+	JNZ(POS2WC)   //jnz _skip
-	;
-	addr = Exe.FindHex(code, addr - 0x100, addr);
-	if (addr < 0)
-		throw Error("CFile::Open CALL not found");
-
-	$$(_, 2.2, `Save the location after the conditional jump`)
-	const modAddr = addr + code.byteCount();
-
-	$$(_, 2.3, `Goto the location of the conditional jump`)
-	addr = Exe.GetTgtAddr(modAddr - 4, PHYSICAL);
-
-	$$(_, 2.4, `Find the location to jump to (based on build version) before the jump address`)
-	let jmpAddr;
-	switch (Exe.Version)
-	{
-		case 6: //VC6
-		{
-			code =
-				LEA(ECX, [EBP, NEG1WC]) //lea ecx, [LOCAL.x]
-			+	MOV([EBP, WCn], ESI)    //mov dword ptr [LOCAL.y], esi
-			+	MOV([EBP, WCn], ESI)    //mov dword ptr [LOCAL.z], esi
-			;
-			jmpAddr = Exe.FindHex(code, addr - 0x38, addr);
-			break;
-		}
-
-		case 9:  //VC9 &
-		case 10: //VC10
-		{
-			code =
-				LEA(ECX, ROC.HasFP ? [EBP, NEG2WC] : [ESP, POS2WC]) //lea ecx, [LOCAL.x]
-			+	CALL(POS3WC)                                        //call func
-			+	XOR(AL, AL)                                         //xor al, al
-			;
-			jmpAddr = Exe.FindHex(code, addr - 0x20, addr);
-			break;
-		}
-
-		default: //VC11+
-		{
-			code =
-				XOR(BL, BL) //xor bl, bl
-			;
-			jmpAddr = Exe.FindHex(code, addr - 0x10, addr);
-			break;
+	// B) MOV r32, imm32
+	if (ref < 0) {
+		const regs = [EAX, ECX, EDX, EBX, ESI, EDI];
+		for (let r of regs) {
+			ref = Exe.FindHex(MOV(r, msgAddr));
+			if (ref >= 0) break;
 		}
 	}
 
-	if (jmpAddr < 0)
-		throw Error("End code missing");
+	// C) PUSH imm32 + (LEA|MOV …)
+	if (ref < 0) {
+		let t = Exe.FindHex(PUSH(msgAddr) + LEA());
+		if (t < 0) t = Exe.FindHex(PUSH(msgAddr) + MOV([]));
+		if (t >= 0) ref = t;
+	}
 
-	$$(_, 3.1, `Prep new code to send the message to OutputDebugStringA function`)
-	ROC.findImports();
+	// D) MOV EDI, imm32
+	if (ref < 0)
+		ref = Exe.FindHex(MOV(EDI, msgAddr));
 
-	const parts =
-	[//0
-		PUSH(EDX)              //push edx
-	+	SUB(ESP, 0x100)        //sub esp, 100h
-	+	MOV(ECX, ESP)          //mov ecx, esp
-	+	MOV(EDX, msgAddr)      //mov edx, offset "CPaletteRes :: Cannot find File : "
+	// E) SSE: movups xmm0, [imm32]  (0F 10 05 <imm32-LE>)
+	if (ref < 0) {
+		const imm = ToHexLE32(msgAddr);
+		ref = Exe.FindHex("0F 10 05 " + imm);
+	}
 
-	,//1
-		MOV(AL, [EDX])         //mov al, byte ptr [EDX] ; _loop1
-	+	MOV([ECX], AL)         //mov byte ptr [ECX], AL
-	+	INC(ECX)               //inc ecx
-	+	INC(EDX)               //inc edx
-	+	TEST(AL, AL)           //test al, al
-	+	JNE(Filler(1,1))       //jne short _loop1
-	+	DEC(ECX)               //dec ecx ; to remove the NULL
-	+	MOV(EDX, ESI)          //mov edx, esi
+	if (ref < 0)
+		throw Error("CPaletteRes reference not found");
 
-	,//2
-		MOV(AL, [EDX])         //mov al, byte ptr [edx] ; _loop2
-	+	MOV([ECX], AL)         //mov byte ptr [ecx], al
-	+	INC(ECX)               //inc ecx
-	+	INC(EDX)               //inc edx
-	+	TEST(AL, AL)           //test al, al
-	+	JNE(Filler(2,1))       //jne short _loop2
-	+	PUSH(ESP)              //push esp
-	+	CALL([ROC.OutDbgStrA]) //call dword ptr [&KERNEL32.OutputDebugStringA]
-	+	ADD(ESP, 0x100)        //add esp, 100h
-	+	POP(EDX)               //pop edx
-	];
+	$$(_, 2.1, "Flip conditional jump near 'test *, *' around the reference");
 
-	const [, _loop1, _loop2] = MapAddrs(0, parts);
+	// 1) test al, al ; jnz rel32  => force always jump
+	let at = Exe.FindHex("84 C0 0F 85 ?? ?? ?? ??", ref - 0x300, ref + 0x80);
+	if (at >= 0) {
+		// 0F 85 -> 90 E9
+		Exe.SetHex(at + 2, "90 E9");
+		return true;
+	}
 
-	code = SetFillTargets( parts, 1,
-	{
-		'1,1' : _loop1,
-		'2,1' : _loop2,
-	});
+	// 2) test eax, eax ; jnz rel32
+	at = Exe.FindHex("85 C0 0F 85 ?? ?? ?? ??", ref - 0x300, ref + 0x80);
+	if (at >= 0) {
+		Exe.SetHex(at + 2, "90 E9");
+		return true;
+	}
 
-	$$(_, 3.2, `Replace at the modAddr`)
-	Exe.SetHex(modAddr, code);
+	// 3) test al, al ; jnz short
+	at = Exe.FindHex("84 C0 75 ??", ref - 0x200, ref + 0x40);
+	if (at >= 0) {
+		// 75 -> EB (short JMP)
+		Exe.SetHex(at + 2, "EB");
+		return true;
+	}
 
-	$$(_, 3.3, `Put a JMP after the code to the jmpAddr we found`)
-	Exe.SetJMP(modAddr + code.byteCount(), jmpAddr, PHYSICAL);
+	// 4) test eax, eax ; jnz short
+	at = Exe.FindHex("85 C0 75 ??", ref - 0x200, ref + 0x40);
+	if (at >= 0) {
+		Exe.SetHex(at + 2, "EB");
+		return true;
+	}
 
-	return true;
+	throw Error("Conditional jump pattern not found around reference");
 };
+
+// (optional) expose only for modern clients; adjust if you want wider support
+IgnorePalErr.validate = () => Exe.BuildDate >= 20170000;
 
 ///
 /// \brief Modify LuaErrorMsg function to send the error message to OutputDebugStringA instead of showing it with MessageBoxA
