@@ -31,37 +31,38 @@
 ///
 ShowBGEmblem = function(_)
 {
-	$$(_, 1, `Load the SSN`)
-	SSN.load();
+    $$(_, 1, `Load the SSN`);
+    SSN.load();
 
-	$$(_, 2.1, `Find the Mode checker pattern used in the emblem display function.`)
-	const plus110 = Exe.Version < 11  //(regA is usually ESI)
-	?
-		ADD(R32, 0x110)               //add regA, 110h ; for VC9-VC10
-	:                                 //  OR
-		LEA(EAX, [R32, 0x110])        //lea eax, [regA + 110h] ; for VC11 to VC14.16
-	;
+    $$(_, 2.1, `Find the Mode checker pattern used in the emblem display function.`);
 
-	let addrs = [
-		...Exe.FindHexN(PUSH_1 + plus110),
-		...Exe.FindHexN(plus110 + PUSH_1)
-	];
-	if (addrs.isEmpty())
-		throw Error("Reference pattern missing");
+    const newPat =
+        LEA(EAX, [ESI, 0x110])  // lea eax,[esi+110]
+      + MOV(ECX, EDI)           // mov ecx,edi
+      + PUSH_1                  // push 1
+      + PUSH(EAX);              // push eax
 
-	let code =
-		MOV(ECX, SSN)  //mov ecx, <g_session>
-	+	CALL(POS3WC)   //call CSession::IsSiegeMode
-	+	TEST(EAX, EAX) //test eax, eax
-	+	JZ(WCp)        //jz short _skip
-	;
+    const oldPat1 = ADD(R32, 0x110) + PUSH_1;
+    const oldPat2 = LEA(EAX, [R32, 0x110]) + PUSH_1;
 
-	const matchAddr = addrs.findAs( memAddr =>
-	{
-		const found = Exe.FindHex(code, memAddr - 0x30, memAddr);
-		if (found > 0)
-			return found;
-	});
+    let addrs = [
+        ...Exe.FindHexN(newPat),
+        ...Exe.FindHexN(oldPat1),
+        ...Exe.FindHexN(oldPat2)
+    ];
+
+    $$(_, 2.2, `Find the mode checker code based on the detected pattern.`);
+
+    let code =
+        MOV(ECX, SSN)  // mov ecx, <g_session>
+      + CALL(POS3WC)   // call CSession::IsSiegeMode
+      + TEST(EAX, EAX) // test eax, eax
+      + JZ(WCp);       // jz short _skip
+
+    const matchAddr = addrs.findAs(memAddr => {
+        const found = Exe.FindHex(code, memAddr - 0x40, memAddr + 0x40);
+        if (found > 0) return found;
+    });
 	if (!matchAddr)
 		throw Error("Mode checker not found");
 
