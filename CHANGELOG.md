@@ -1,3 +1,17 @@
+# SKylove — 2025-06-04 build
+- ShowReplayBtn (2025-06-04 only)
+- @llchrisll: spopup & QuestQualificationInfo patches; added Rune System Lua and fixed related issues
+- NPC Dialogue Scrolling
+- Preview in Shop
+- Chat Repeat
+- Data Folder First
+- No Hourly
+- Increase Zoom
+- Enable Proxy
+- Load KrExtSettings
+- License Screen Visibility
+- Enable Flag Animation
+
 # 2024-08-07 Changes
 
 ## Common Updates
