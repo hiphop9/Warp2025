@@ -1,5 +1,5 @@
 # SKylove — 2025-06-04 build
-- ShowReplayBtn (2025-06-04 only)
+- ShowReplayBtn
 - @llchrisll: spopup & QuestQualificationInfo patches; added Rune System Lua and fixed related issues
 - NPC Dialogue Scrolling
 - Preview in Shop
@@ -11,6 +11,10 @@
 - Load KrExtSettings
 - License Screen Visibility
 - Enable Flag Animation
+- Ignore Palette errors
+- Allow 65k hair styles : Increase hair styles
+- IgnoreLuaErr
+- Enable Emblem hover for BG
 
 # 2024-08-07 Changes
 
