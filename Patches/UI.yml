@@ -59,7 +59,7 @@ CustomUI:
         - SkipServiceSelect:
             title : Skip service selection screen
             recommend : no
-            author : Shinryo
+            author : Shinryo, Skylove
             desc : Jumps directly to the login interface without asking to select a service.
         
         - OpenToServiceSelect:
