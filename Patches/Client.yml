@@ -196,7 +196,7 @@ EquipPreview:
         - PreviewInShop:
             title : Enable equipment preview in Cash Shop
             recommend : no
-            author : Andrei Karas (4144) , Neo-Mind
+            author : Andrei Karas (4144) , Neo-Mind,Skylove
             desc: Add support for preview button in cash shop (right click the items to see the button). Needs the switch enabled in server-side too.
         
         - PreviewInTrader:

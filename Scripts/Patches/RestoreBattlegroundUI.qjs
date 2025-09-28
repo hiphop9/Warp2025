@@ -1,0 +1,186 @@
+// *********************************************************** \\
+function RestoreBattlegroundUI()
+{
+	const StrNavigation = Exe.FindText("navigation");
+	if (StrNavigation < 0)
+	{
+		throw Error("Could not find the string \"navigation\"");
+	}
+
+	let AddrNavigation = Exe.FindHex(PUSH(StrNavigation));
+	if (AddrNavigation < 0)
+	{
+		throw Error("Could not find the instruction \'push offset \"navigation\"\'");
+	}
+
+	let Code =
+		MOVAPS(XMM0, XMMWORD_PTR, [POS4WC])			// movaps xmm0, xmmword ptr [ListButtonsID]
+	+	MOV(EAX, [POS3WC]);							// mov eax, dword ptr [dword]
+
+	let Addr = Exe.FindHex(Code, AddrNavigation - 0x5000, AddrNavigation);
+	if (Addr < 0)
+	{
+		throw Error("Could not find the instructions pattern for SendMsg buttons ID");
+	}
+
+	const MovAps = MOVAPS(XMM0, XMMWORD_PTR, [POS4WC]);
+
+	let ListButtonsID_XMM0 = [];
+	for (let Num = 0; Num < 6; ++Num)
+	{
+
+		Addr = Exe.FindHex(MovAps, Addr, Addr + 0x20);
+		if (Addr < 0)
+		{
+			throw Error("Could not find the Buttons ID from MOVAPS at No." + Num);
+		}
+
+		const ButtonID_XMM0 = Exe.GetUint32(Addr + 3);
+		ListButtonsID_XMM0.push(ButtonID_XMM0);
+
+		Addr += MovAps.byteCount();
+	}
+
+	ListButtonsID_XMM0.sort();
+	const AddrListButtonsID = ListButtonsID_XMM0[0];
+
+	let ListButtonsID = [];
+	for (let Num = 0; Num < 24; ++Num)
+	{
+		const ButtonIdx = Num * 4;
+		const ButtonID = Exe.GetUint32(Exe.Vir2Phy(AddrListButtonsID) + ButtonIdx);
+		ListButtonsID.push(ButtonID);
+	}
+
+	const WID_ENTRYQUEUEWND = 0x9D;
+	const BattlegroundButtonIdx = 11;
+	const BattlegroundButtonID = ListButtonsID[BattlegroundButtonIdx];
+
+	const StrRecEndPlease = Exe.FindText("REC End please");
+	if (StrRecEndPlease < 0)
+	{
+		throw Error("Could not find the string \"REC End please\"");
+	}
+
+	const AddrRecEndPlease = Exe.FindHex(PUSH(StrRecEndPlease));
+	if (AddrRecEndPlease < 0)
+	{
+		throw Error("Could not find the instruction \'push offset \"REC End please\"\'");
+	}
+
+	Code =
+		PUSH(0x9B)		// push WID_REPLAYRECCONTROLWND
+	+	MOV(ECX, EDI)	// mov ecx, edi
+	+	CALL(ALLWC);	// call UIWindow::_unk1
+
+	Addr = Exe.FindHex(Code, AddrRecEndPlease - 0x40, AddrRecEndPlease + 0x20);
+	if (Addr < 0)
+	{
+		throw Error("Could not find the window instructions pattern");
+	}
+
+	const AddrOpenMenuWindow = Exe.GetTgtAddr(Addr + Code.byteCount() - 4);
+
+	Code =
+		PUSH([EBP, 0x1C])	// push dword ptr [ebp+1Ch]
+	+	MOV(ECX, EDI)		// mov ecx, edi
+	+	PUSH([EBP, 0x18])	// push dword ptr [ebp+18h]
+	+	PUSH([EBP, 0x14])	// push dword ptr [ebp+14h]
+	+	PUSH(EBX)			// push ebx
+	+	PUSH([EBP, 0xC])	// push dword ptr [ebp+0Ch] or push edi
+	+	PUSH([EBP, 0x8])	// push dword ptr [ebp+8]
+	+	CALL(POS3WC);		// call UIWindow::SendMsg
+
+	Addr = Exe.FindHex(Code, AddrRecEndPlease - 0x300, AddrRecEndPlease + 0x200);
+	if (Addr < 0)
+	{
+		throw Error("Could not find the SendMsg instructions pattern");
+	}
+
+	const AddrDetourCall = Addr + Code.byteCount() - 5;
+	const AddrDetourAddr = Exe.GetTgtAddr(AddrDetourCall + 1);
+
+	Code =
+		MOV(R32, 0x90A); // mov r32, 90Ah
+
+	Addr = Exe.FindHex(Code);
+	if (Addr < 0)
+	{
+		throw Error("Could not find the instruction \'mov R32, 90Ah\'");
+	}
+
+	Code =
+		PUSH(EBP)		// push ebp
+	+	MOV(EBP, ESP);	// mov ebp, esp
+
+	Addr = Exe.FindLastHex(Code, Addr, Addr - 0x40);
+	if (Addr < 0)
+	{
+		throw Error("Could not find the function stack frame init");
+	}
+
+	const AddrSendEntryPacket = Addr;
+
+	Code =
+		MOV(EAX, [POS4WC])		// mov eax, dword ptr [g_entryQueue]
+	+	MOV(EDI, [EAX, 0x34]);	// mov edi, dword ptr [eax+34h]
+
+	Addr = Exe.FindHex(Code);
+	if (Addr < 0)
+	{
+		throw Error("Could not find the \'g_entryQueue\'");
+	}
+
+	const AddrEntryQueue = Exe.GetUint32(Addr + 1);
+
+	let Parts =
+	[ // 0
+		CMP([EBP, 0x10], BattlegroundButtonID)	// cmp dword ptr [ebp+0x10], 177h
+	+	JNE(Filler(1, 1))						// jne _NotBattleground
+
+	, // 1
+		PUSH(ECX)								// push ecx
+	+	MOV(ECX, [AddrEntryQueue])				// mov ecx, dword ptr [g_entryQueue]
+	+	CMP(BYTE_PTR, [ECX, 0x38], 1)			// cmp byte ptr [ecx+38h]
+	+	JNE(Filler(2, 1))						// jne _NotNotify
+
+	, // 2
+		CALL(Filler(3))							// call CEntryQueueMgr::Cz_Req_Entry_Queue_Ranking
+
+	, // 3
+		POP(ECX)								// pop ecx
+	+	PUSH(WID_ENTRYQUEUEWND)					// push WID_ENTRYQUEUEWND
+	+	CALL(Filler(4))							// call UIWindow::OpenMenuWindow
+
+	, // 4
+		JMP(Filler(5))							// jmp UIWindow::SendMsg
+	];
+
+	Parts[0] = SwapFillers(Parts[0], { '1, 1': Parts[1].byteCount() + Parts[2].byteCount() + Parts[3].byteCount() });
+	Parts[1] = SwapFillers(Parts[1], { '2, 1': Parts[2].byteCount() });
+
+
+	let TemplateDetourSendMsg = "";
+	for (let Num = 0; Num < Parts.length; ++Num)
+	{
+		TemplateDetourSendMsg += Parts[Num];
+	}
+	
+	let [Target, TargetVirtual] = Exe.Allocate(TemplateDetourSendMsg.byteCount(), 0x10);
+
+	const CodeTetourSendMsg = SetFillTargets(TemplateDetourSendMsg,
+	{
+		start: TargetVirtual,
+		3: AddrSendEntryPacket,
+		4: AddrOpenMenuWindow,
+		5: AddrDetourAddr,
+	});
+
+	Exe.SetHex(Target, CodeTetourSendMsg);
+	Exe.SetCALL(AddrDetourCall, TargetVirtual);
+
+	return true;
+}
+
+RestoreBattlegroundUI.validate = () =>
+	Exe.BuildDate >= 20240600;

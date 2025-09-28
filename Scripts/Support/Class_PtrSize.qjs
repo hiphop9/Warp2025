@@ -63,6 +63,7 @@ if (typeof PtrSize === 'undefined') //avoid redefinition
 		['QWORD_PTR'  ,  64],
 		['TBYTE_PTR'  ,  80],
 		['DQWORD_PTR' , 128],
+		['XMMWORD_PTR', 128],
 	])
 		Assign(name, `new PtrSize(${size})`);
 

@@ -90,7 +90,7 @@ CustomData:
         - DataFolderFirst:
             title : Read data folder first
             recommend : no
-            author : Shinryo
+            author : Shinryo ,Skylove
             desc : Gives the 'data' directory contents priority over GRF contents.
         
         - PlainTextDesc:
@@ -102,7 +102,7 @@ CustomData:
         - LoadKrExtSettings:
             title : Always load korea ExternalSettings lua file
             recommend : no
-            author : Secret , Andrei Karas (4144) , X-EcutiOnner
+            author : Secret , Andrei Karas (4144) , X-EcutiOnner,Skylove
             desc : Makes the client load Korea server's ExternalSettings file for all langtypes.
         
         - IncrViewID:
@@ -343,7 +343,7 @@ CustomPath:
         - CustomspopupLub:
             title : Customize spopup lub
             recommend : no
-            author : llchrisll
+            author : llchrisll,Skylove
             desc : Make the client load user specified lua file instead of <b>spopup.lub</b>.
 
         - CustomChangeMatLub:
@@ -355,7 +355,7 @@ CustomPath:
         - CustomQuestQualiLub:
             title : Customize QuestClassificationInfo lub
             recommend : no
-            author : llchrisll
+            author : llchrisll,Skylove
             desc : Make the client load user specified lua file instead of <b>QuestClassificationInfo.lub</b>.
 
         - CustomRuneDescLub:

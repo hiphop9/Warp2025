@@ -59,7 +59,7 @@ CustomNW:
         - EnableProxy:
             title : Enable proxy support
             recommend : no
-            author : Ai4rei/AN , Neo-Mind
+            author : Ai4rei/AN , Neo-Mind,Skylove
             desc : Ignores server-provided IP addresses when changing servers.
             
         - NoHardCodedAddr:

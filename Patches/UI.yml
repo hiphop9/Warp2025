@@ -89,7 +89,7 @@ CustomUI:
         - NoHourly:
             title : Remove Hourly announcement
             recommend : yes
-            author : Ai4rei/AN
+            author : Ai4rei/AN ,Skylove
             desc : Remove hourly game grade and hourly play time minder announcements.
 
         - EnableFlagEmotes:
@@ -247,11 +247,18 @@ CustomUI:
             recommend : no
             author : CH.C (jchcc)
             desc : Fix issue in homunculus AI which prevents automatic attacks (present in clients 20170920 clients and newer).
+
         - EnableFlagAnimation:
             title : Enable WoE Flag Animation
             recommend : no
             author : Sapito Sucio
             desc : Restores WoE flag's animation, disabled by Gravity long ago.
+
+        - RestoreBattlegroundUI:
+            title : Restore Battleground UI
+            recommend : no
+            author : Skylove, Sprite Smith
+            desc : Restores the hidden Battleground navigation button and re-enables Entry Queue UI.
 
 CaseInsensitiveSearch:
     title: CASE INSENSITIVE SEARCH

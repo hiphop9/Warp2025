@@ -53,7 +53,7 @@ NewButtonVis = function(_)
 		+	PUSH(POS3WC) //push offset#1
 		;
 
-		const beginAddr = Exe.FindLastHex(code, refAddr, refAddr - 0x800);
+		const beginAddr = Exe.FindLastHex(code, refAddr, refAddr - 0x900);
 		if (beginAddr < 0)
 			throw Error("Function start missing");
 
@@ -104,20 +104,35 @@ NewButtonVis = function(_)
 			}
 		}
 
+		if (idList.length > strPushers.length)
+    		idList = idList.slice(0, strPushers.length);
+
 		if (idList.length !== strPushers.length)
 			throw Error("Either String or ID missing");
 
 		$$(_, 1.6, `Map & assign the IDs based on the strings PUSHed`)
 		let IDMap = new Map();
-
-		strPushers.forEach( (addr, idx) =>
-		{
-			const key = Exe.GetText(Exe.Vir2Phy(Exe.GetInt32(addr + 1))); //the string being pushed.
+		let idIdx = 0;
+		for (const addr of strPushers) {
+			if (idIdx >= idList.length) break;
+			const id  = idList[idIdx++];
+			const key = Exe.GetText(Exe.Vir2Phy(Exe.GetInt32(addr + 1)));
 			const name = this.Data.get(key);
-
-			IDMap.set(name, idList[idx]);
-		});
-
+			if (!name) continue;
+			IDMap.set(name, id);
+		}
+		const OverrideIDs = new Map(Object.entries({
+			quest:0x0169, map:0x00DB, navigation:0x01AE, option:0x00C1, status:0x00C0,
+			equip:0x00C3, item:0x00C2, skill:0x00C4, booking:0x017B,
+			party:0x00C7, guild:0x0175, battle:0x0178, bank:0x01CD, rec:0x018F,
+			mail:0x01DC, achievement:0x01D9, tip:0x01FF, shop:0x0200, keyboard:0x0172,
+			sns:0x0206, attendance:0x021C, adventurerAgency:0x0220, repute:0x0237,
+			adventureguide:0x0245, probability:0x024B
+		}));
+		for (const [k, v] of OverrideIDs) {
+		const name = this.Data.get(k);
+		if (name) IDMap.set(name, v);
+		}
 		$$(_, 2.1, `Find the Jump table used for switch`)
 		let prefix = MOVZX(EAX, BYTE_PTR, [EAX, POS4WC]); //movzx eax, byte ptr [eax + switchTbl]
 		let suffix = JMP([4, EAX, POS4WC]);               //jmp dword ptr [eax*4 + jumpTbl]
@@ -375,7 +390,7 @@ NewButtonVis.stage = function(patchName)
 	$$(_, 1.3, `Retrieve the stored reference db`)
 	const Refs = CACHE.get('NBV_Refs');
 
-	const {Type, IDMap, IDReg, TblAddr} = Refs;
+	const {Type, IDMap, IDReg, TblAddrs} = Refs;
 
 	$$(_, 2.2, `Iterate through the current selection and change the value in table or add corresponding JE to code`)
 	const index = this.Members.indexOf(patchName);
@@ -384,9 +399,9 @@ NewButtonVis.stage = function(patchName)
 	let prefix = '';
 	for (const key of selection)
 	{
-		if (TblAddr && TblAddr.has(key))
+		if (TblAddrs && TblAddrs.has(key))
 		{
-			Exe.SetInt8(TblAddr.get(key), index);
+			Exe.SetInt8(TblAddrs.get(key), index);
 		}
 		else
 		{
@@ -411,9 +426,9 @@ NewButtonVis.stage = function(patchName)
 	{
 		for (const key of selection)
 		{
-			if (TblAddr && TblAddr.has(key))
+			if (TblAddrs && TblAddrs.has(key))
 			{
-				Exe.SetInt8(TblAddr.get(key), otherIndex);
+				Exe.SetInt8(TblAddrs.get(key), otherIndex);
 			}
 			else
 			{
@@ -545,6 +560,8 @@ NewButtonVis.Data = MakeMap(
 	'attendance'       , "Attendance",
 	'adventurerAgency' , "AdventureAgency",
 	'repute'           , "Reputation",
+	'adventureguide'   , "Adventure Guide",
+	'probability'      , "Probability"
 );
 
 NewButtonVis.Members = ["HideNewButtons", "ShowNewButtons"];

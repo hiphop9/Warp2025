@@ -15,6 +15,9 @@
 - Allow 65k hair styles : Increase hair styles
 - IgnoreLuaErr
 - Enable Emblem hover for BG
+- HideNewwButtons
+- ShowNewButtons
+- RestoreBattlegroundUI
 
 # 2024-08-07 Changes
 

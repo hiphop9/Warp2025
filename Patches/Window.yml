@@ -41,13 +41,13 @@ ButtonVis:
         - HideNewButtons:
             title : Hide Buttons (New UI)
             recommend : no
-            author : Neo-Mind
+            author : Neo-Mind,Skylove,Cremané
             desc : Hide the various buttons in the Basic Info Window under the HP/SP Bars.
         
         - ShowNewButtons:
             title : Show Buttons (New UI)
             recommend : no
-            author : Neo-Mind
+            author : Neo-Mind,Skylove,Cremané
             desc : Shows some of the various hidden buttons in the Basic Info Window under the HP/SP Bars.
 
 CharCreation:
@@ -180,7 +180,7 @@ ShowButton:
         - ShowReplayBtn:
             title : Always show Replay button in Service Select
             recommend : no
-            author : Neo-Mind
+            author : Neo-Mind,Skylove
             desc : Makes the client show Replay button on Service Select screen that opens the Replay File List window.
         
         - ShowCancelBtn:
