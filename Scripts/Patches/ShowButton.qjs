@@ -233,24 +233,20 @@ ShowReplayBtn = function(_)
         throw Error("push 2729h not found");
     let retnVA = pushVA + 5;
 
-    $$( _, "2.2", "Find gReplayMgr + sub_A5D700");
-    let sigVA = Exe.FindHex(
-        "B9 ?? ?? ?? 01 E8 ?? ?? ?? ?? 8B F0 85 F6 0F 84 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 2B 86 E4 01 00 00"
-    );
-    if (sigVA < 0)
-        throw Error("ReplayMgr signature not found");
+    $$( _, "2.2", "00BFC810");
+	let sigVA = Exe.FindHex(
+		"E9 ?? ?? ?? ?? 55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 A1 ?? ?? ?? ?? 33 C5 50"
+	);
+	if (sigVA < 0)
+		throw Error("Replay hook pattern not found");
 
-    let gReplayMgr = Exe.GetInt32(sigVA + 1);   // mov ecx, imm32
-    let tgtFunc   = Exe.GetTgtAddr(sigVA + 6);  // call sub_A5D700
+	// JMP +5 → 55 위치 (00BFC810)
+	let tgtFunc = Exe.Phy2Vir(sigVA + 5, CODE);
 
     $$( _, "3.1", "Build hook stub");
     let code =
         PUSHAD +
-        MOV(ECX, gReplayMgr) +   // mov ecx, gReplayMgr
-        CALL(Filler(1)) +        // call sub_A5D700
-        TEST(EAX, EAX) +
-        JE(8) +
-        MOV([EAX, 4], 6) +       // [eax+4] = 6 (ServerSelect mode)
+        CALL(Filler(1)) +        // call 00BFC810
         MOV([EAX, 0x6C], 0) +    // [eax+6C] = 0
         POPAD +
         PUSH(0x2722) +           // push 2722h
@@ -258,7 +254,7 @@ ShowReplayBtn = function(_)
 
     const args = {
         targets : {
-            1 : tgtFunc,                   // sub_A5D700
+            1 : tgtFunc,                   // 00BFC810
             2 : Exe.Phy2Vir(retnVA, CODE)  // return addr
         }
     };
