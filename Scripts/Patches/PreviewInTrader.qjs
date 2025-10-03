@@ -1,0 +1,74 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2021-2023 Neo-Mind                                       *
+*   Copyright (C) 2021-2023 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind, Andrei (4144)                                *
+*   Created Date  : 2022-09-30                                             *
+*   Last Modified : 2023-08-26                                             *
+*                                                                          *
+\**************************************************************************/
+PreviewInTrader = function (_)
+{
+     let calc = Exe.FindHex("B8 ?? ?? ?? ?? 83 E9 0C F7 E1 56 57 8B FA C1 EF ?? 85 FF 7E");
+    if (calc < 0) throw Error("calc signature not found");
+    Exe.SetInt32(calc + 1, 0x51EB851F); 
+    Exe.SetHex(calc + 16, "03");       
+
+     let loop = Exe.FindHex("E8 ?? ?? ?? ?? 8D 76 0D 83 EF 01 75 ?? 8B 43 04");
+    if (loop < 0) throw Error("loop signature not found");
+
+     Exe.SetHex(loop + 7, "19");
+
+     const retVA = Exe.Phy2Vir(loop + 5, CODE);
+     let orgCallVA = Exe.GetTgtAddr(loop);
+    let relDisp = (typeof Exe.GetInt32 === "function")
+                    ? Exe.GetInt32(loop + 1)
+                    : (Exe.GetUint32(loop + 1) << 0);
+    let orgCallVA2 = (retVA + relDisp) >>> 0;
+    if (orgCallVA !== orgCallVA2) orgCallVA = orgCallVA2;
+
+    let tpl =
+          CALL(Filler(1))
+        + MOV(ECX, [0x015D4818])
+        + MOV(ECX, [ECX, 0x4])
+        + ADD(ECX, 0x8)
+        + MOVZX(EAX, [ESI, 0x0D])
+        + MOV([ECX, 0x70], EAX)
+        + MOV(EAX, [ESI, 0x0F])
+        + MOV([ECX, 0x08], EAX)
+        + JMP(Filler(2));
+
+    const [cavePA, caveVA] = Exe.AddHex(tpl, 0x100);
+    const stub = SetFillTargets(tpl, {
+        start: caveVA,
+        1:     orgCallVA,
+        2:     retVA
+    });
+    Exe.SetHex(cavePA, stub);
+
+    Exe.SetJMP(loop, caveVA);
+
+    return true;
+};
+
+PreviewInTrader.validate = () =>
+    Exe.FindHex("E8 ?? ?? ?? ?? 8D 76 19 83 EF 01 75 ?? 8B 43 04") < 0;

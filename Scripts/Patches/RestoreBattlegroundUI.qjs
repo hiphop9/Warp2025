@@ -141,7 +141,7 @@ function RestoreBattlegroundUI()
 	, // 1
 		PUSH(ECX)								// push ecx
 	+	MOV(ECX, [AddrEntryQueue])				// mov ecx, dword ptr [g_entryQueue]
-	+	CMP(BYTE_PTR, [ECX, 0x38], 1)			// cmp byte ptr [ecx+38h]
+	+	CMP(BYTE_PTR, [ECX, 0x3C], 1)			// cmp byte ptr [ecx+38h]
 	+	JNE(Filler(2, 1))						// jne _NotNotify
 
 	, // 2
@@ -182,5 +182,8 @@ function RestoreBattlegroundUI()
 	return true;
 }
 
-RestoreBattlegroundUI.validate = () =>
-	Exe.BuildDate >= 20240600;
+RestoreBattlegroundUI.validate = function()
+{
+	const Code = PUSH(0x9D) + JMP(POS2WC);
+	return (Exe.FindHex(Code) < 0);
+};
