@@ -1,0 +1,119 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2023-2024 Jittapan Pluemsumran (Secret)                  *
+*                                                                          *
+*   This file is a part of WARP project                                    *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Jittapan (Secret)                                      *
+*   Created Date  : 2023-02-09                                             *
+*   Last Modified : 2024-09-03                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Hides the Itemba buttons (open/close) from the shortcut window
+///
+HideItemba = function ()
+{
+    const _ = "HideItemba : ";
+
+    if (Exe.BuildDate < 20240700)
+    {
+        $$(_ + "Legacy build detected — skip VA patch");
+        return true;
+    }
+
+    $$(_ + "20250700+ VA+offset patch start");
+
+    // ───────────────────────────────
+    // btn_open_itemslot
+    // ───────────────────────────────
+    const openNormal = Exe.FindText(
+        "\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\Shortcut\\btn_open_itemslot_normal.bmp"
+    );
+    const openPress = Exe.FindText(
+        "\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\Shortcut\\btn_open_itemslot_press.bmp"
+    );
+
+    if (openNormal < 0 || openPress < 0)
+        throw Error("btn_open_itemslot_*.bmp not found");
+
+    const pushOpenNormal = openNormal + 0x34; // 0x0101927C → 0x010192B0
+    const pushOpenPress  = openPress  + 0x33; // 0x010192B4 → 0x010192E7
+
+    const on1 = Exe.FindHex(PUSH(openNormal));
+    const on2 = Exe.FindHex(PUSH(openNormal), on1 + 5);
+    const op1 = Exe.FindHex(PUSH(openPress));
+    if (on1 < 0 || on2 < 0 || op1 < 0)
+        throw Error("btn_open_itemslot push targets not found");
+
+    Exe.SetUint32(on1 + 1, pushOpenNormal);
+    Exe.SetUint32(on2 + 1, pushOpenNormal);
+    Exe.SetUint32(op1 + 1, pushOpenPress);
+
+    const oz1 = Exe.FindHex("6A 01", on1 - 0x40, on2 + 0x40);
+    if (oz1 >= 0) Exe.SetUint8(oz1 + 1, 0x00);
+    const oz2 = Exe.FindHex("6A 02", on2 - 0x40, op1 + 0x40);
+    if (oz2 >= 0) Exe.SetUint8(oz2 + 1, 0x00);
+
+    // ───────────────────────────────
+    // btn_close_itemslot
+    // ───────────────────────────────
+    const closeNormal = Exe.FindText(
+        "\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\Shortcut\\btn_close_itemslot_normal.bmp"
+    );
+    const closePress = Exe.FindText(
+        "\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\Shortcut\\btn_close_itemslot_press.bmp"
+    );
+
+    if (closeNormal < 0 || closePress < 0)
+        throw Error("btn_close_itemslot_*.bmp not found");
+
+	const pushCloseNormal = closeNormal + 0x35; // instead of +0x34
+	const pushClosePress  = closePress  + 0x34; // instead of +0x33
+
+    const cn1 = Exe.FindHex(PUSH(closeNormal));
+    const cn2 = Exe.FindHex(PUSH(closeNormal), cn1 + 5);
+    const cp1 = Exe.FindHex(PUSH(closePress));
+    if (cn1 < 0 || cn2 < 0 || cp1 < 0)
+        throw Error("btn_close_itemslot push targets not found");
+
+    Exe.SetUint32(cn1 + 1, pushCloseNormal);
+    Exe.SetUint32(cn2 + 1, pushCloseNormal);
+    Exe.SetUint32(cp1 + 1, pushClosePress);
+
+    const cz1 = Exe.FindHex("6A 01", cn1 - 0x40, cn2 + 0x40);
+    if (cz1 >= 0) Exe.SetUint8(cz1 + 1, 0x00);
+    const cz2 = Exe.FindHex("6A 02", cn2 - 0x40, cp1 + 0x40);
+    if (cz2 >= 0) Exe.SetUint8(cz2 + 1, 0x00);
+
+    $$(_ + "HideItemba patch completed (open + close)");
+    return true;
+};
+
+HideItemba.validate = function ()
+{
+    const openNormal = Exe.FindText(
+        "\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\Shortcut\\btn_open_itemslot_normal.bmp"
+    );
+    const closeNormal = Exe.FindText(
+        "\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\Shortcut\\btn_close_itemslot_normal.bmp"
+    );
+    return (openNormal > 0 && closeNormal > 0 && Exe.BuildDate >= 20240700);
+};

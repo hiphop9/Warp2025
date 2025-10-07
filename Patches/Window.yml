@@ -244,11 +244,11 @@ TraitStatusButton:
         - DisableTraitStatusButton:
             title : Disable Trait Status Button
             recommend : no
-            author : Secret
+            author : Secret,Cremané
             desc : Make the Trait Status button do nothing.
         
         - HideTraitStatusButton:
             title : Hide Trait Status Button
             recommend : no
-            author : Secret
+            author : Secret,Skylove
             desc : Hide the Trait Status Expansion Button in the Status Window.

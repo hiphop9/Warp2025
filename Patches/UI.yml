@@ -162,7 +162,7 @@ CustomUI:
             title     : NPC Dialog Scroll
             recommend : no
             author    : Skylove
-            desc      : Prevents the NPC dialog window from auto-resetting its scroll (supports clients >= 2024-07-13).
+            desc      : Allow scrolling of the NPC dialog window even when the selection menu is visible (supports clients >= 2024-07-13).
 
         - MoveUpItemCount:
             title : Move Item Count Upwards
@@ -259,6 +259,12 @@ CustomUI:
             recommend : no
             author : Skylove, Sprite Smith
             desc : Restores the hidden Battleground navigation button and re-enables Entry Queue UI.
+
+        - HideItemba:
+            title : Hide Item ba
+            recommend : no
+            author : Skylove
+            desc : Hides the Shortcut Item Bar (Open/Close buttons) from the user interface.
 
 CaseInsensitiveSearch:
     title: CASE INSENSITIVE SEARCH

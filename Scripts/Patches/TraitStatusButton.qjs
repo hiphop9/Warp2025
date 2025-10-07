@@ -29,30 +29,122 @@
 ///
 /// \brief Makes the Trait Status button in the status window do nothing
 ///
-DisableTraitStatusButton = function()
-{
+DisableTraitStatusButton = function() {
     const _ = 'DisableTraitStatusButton : ';
 
-    $$(_ + '1.1 Find the UUID comparison')
-    const prefix =
-        CMP(EAX, ROC.FullVer == 14.29 ? (Exe.BuildDate > 20240000 ? 0x222 : 0x221) : 0x21E) //cmp eax, 222h/221h/21Eh
-    ;
-    const suffix =
-		JG(POS3WC) //jg _skip#1
-    +   JZ(POS3WC) //jz _skip#2
-    ;
+    $$(_ + '1.1 - Find the UUID comparison - Extended search with debugging');
+    
+    // Valores conhecidos + novos valores possíveis para clientes mais recentes
+    const possibleValues = [0x222, 0x221, 0x21E, 0x223, 0x224, 0x225, 0x226]; 
+    let addr = -1;
+    let foundValue = -1;
 
-    let addr = Exe.FindHex(prefix + suffix);
-	if (addr < 0)
-		throw Error('UIID comparison not found.');
+    // Primeira tentativa: padrão original
+    for (const val of possibleValues) {
+        const prefix = CMP(EAX, val);
+        const suffix = JG(POS3WC) + JZ(POS3WC);
+        
+        addr = Exe.FindHex(prefix + suffix);
+        if (addr >= 0) {
+            foundValue = val;
+            addr += prefix.byteCount();
+            $$(_ + `1.1a - Found original pattern with value ${val.toHex()} at ${addr.toHex(8)}`);
+            break;
+        }
+    }
 
-	addr += prefix.byteCount();
-	
-    $$(_ + '1.2 - NOP the jumps out')
-    Exe.SetNOPs(addr, suffix.byteCount()); // 6 for each jumps (12)
+    // Segunda tentativa: padrão alternativo para clientes mais novos
+    if (addr < 0) {
+        $$(_ + '1.1b - Trying alternative patterns for newer clients');
+        
+        for (const val of possibleValues) {
+            // Padrão: CMP EAX, val + JNE/JG + JZ (algumas variações)
+            let patterns = [
+                CMP(EAX, val) + JNE(POS3WC) + JZ(POS3WC),  // jne em vez de jg
+                CMP(EAX, val) + JG(WCp) + JZ(WCp),         // saltos curtos
+                CMP(EAX, val) + JA(POS3WC) + JZ(POS3WC),   // ja em vez de jg
+                CMP(EAX, val) + JG(POS3WC) + JE(POS3WC),   // je em vez de jz
+            ];
+            
+            for (let i = 0; i < patterns.length; i++) {
+                addr = Exe.FindHex(patterns[i]);
+                if (addr >= 0) {
+                    foundValue = val;
+                    addr += CMP(EAX, val).byteCount();
+                    $$(_ + `1.1b - Found alternative pattern ${i} with value ${val.toHex()} at ${addr.toHex(8)}`);
+                    break;
+                }
+            }
+            if (addr >= 0) break;
+        }
+    }
+
+    // Terceira tentativa: busca mais ampla por comparações similares
+    if (addr < 0) {
+        $$(_ + '1.1c - Trying broader search for trait button comparisons');
+        
+        // Procura por qualquer comparação na faixa de valores esperados seguida de saltos
+        for (let val = 0x21D; val <= 0x230; val++) {
+            const prefix = CMP(EAX, val);
+            const patterns = [
+                prefix + JG(POS3WC) + JZ(POS3WC),
+                prefix + JNE(POS3WC) + JZ(POS3WC),
+                prefix + JA(POS3WC) + JE(POS3WC),
+            ];
+            
+            for (const pattern of patterns) {
+                addr = Exe.FindHex(pattern);
+                if (addr >= 0) {
+                    foundValue = val;
+                    addr += prefix.byteCount();
+                    $$(_ + `1.1c - Found broad search pattern with value ${val.toHex()} at ${addr.toHex(8)}`);
+                    break;
+                }
+            }
+            if (addr >= 0) break;
+        }
+    }
+
+    if (addr < 0) {
+        // Debug: mostrar informações úteis para análise manual
+        $$(_ + '1.1d - Pattern not found. Performing diagnostic search...');
+        
+        // Procura por texto relacionado ao trait button
+        const traitTexts = ["trait", "status", "button"];
+        for (const text of traitTexts) {
+            const textAddr = Exe.FindText(text, CASE_INSENSITIVE);
+            if (textAddr >= 0) {
+                $$(_ + `Found "${text}" text at ${textAddr.toHex(8)}`);
+            }
+        }
+        
+        // Procura por PUSHs de valores na faixa esperada
+        for (let val = 0x21D; val <= 0x230; val++) {
+            const pushAddr = Exe.FindHex(PUSH(val));
+            if (pushAddr >= 0) {
+                $$(_ + `Found PUSH ${val.toHex()} at ${pushAddr.toHex(8)} - possible trait button ID`);
+            }
+        }
+        
+        throw Error('Trait button UUID comparison not found. Check debug logs for potential values.');
+    }
+
+    $$(_ + `1.2 - NOPing jumps at address ${addr.toHex(8)} (found value: ${foundValue.toHex()})`);
+    
+    // Determina o número de bytes a serem NOPeados baseado no padrão encontrado
+    let jumpByteCount = 12; // 6 bytes por salto, 2 saltos (padrão default)
+    
+    // Verifica se são saltos curtos ou longos
+    const firstJump = Exe.GetUint8(addr);
+    if (firstJump === 0x7F || firstJump === 0x74 || firstJump === 0x75) { // jg short, jz short, jnz short
+        jumpByteCount = 4; // 2 bytes por salto curto, 2 saltos
+    }
+    
+    Exe.SetNOPs(addr, jumpByteCount);
 
     return true;
 }
+
 
 ///
 /// \brief Disable for unsupported clients.
@@ -68,38 +160,199 @@ DisableTraitStatusButton.validate = function()
 HideTraitStatusButton = function()
 {
     const _ = 'HideTraitStatusButton : ';
+    if (Exe.BuildDate >= 20240100)
+    {
+        const normalVA = Exe.FindText(
+            "\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\statuswnd\\expand_on_normal.bmp"
+        );
+        const pressVA  = Exe.FindText(
+            "\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\statuswnd\\expand_on_press.bmp"
+        );
+        if (normalVA < 0 || pressVA < 0)
+            throw Error("expand_on_*.bmp not found (Korean path)");
 
-    $$(_ + '1.1 - Find the UIWindow::AddChild call')
-	const suffix =
-       CALL(ALLWC)
-    ;
-	let prefix;
-	if (ROC.FullVer == 14.29)
-	{
-		prefix =
-			PUSH(Exe.BuildDate > 20240000 ? 0x222 : 0x221)  //push 221h/222h
-		+	MOV(R32, [R32])     //mov regA, dword ptr [regB]
-		+	CALL([R32, POS2WC]) //call dword ptr [regA + dispA]
-		+	PUSH([R32, POS2WC]) //push dword ptr [regC + dispC]
-		+	MOV(ECX, R32)       //mov ecx, regD
-		;
-	}
-	else
-	{
-		prefix =
-			MOV([EAX, WC], 0x21E)
-		+   PUSH([ESI, POS2WC])
-		;
-	}
-	
-    let addr = Exe.FindHex(prefix + suffix);
-    if (addr < 0)
-        throw Error('UIWindow::AddChild call not found');
+        const pushNormal = normalVA + 0x2D; // 01016214 -> 01016241 (= +45)
+        const pushPress  = pressVA  + 0x2C; // 01016244 -> 01016270 (= +44)
+
+        const n1 = Exe.FindHex(PUSH(normalVA));
+        if (n1 < 0) throw Error("first normal push not found");
+        let n2 = Exe.FindHex(PUSH(normalVA), n1 + 5);
+        if (n2 < 0) throw Error("second normal push not found");
+        const p1 = Exe.FindHex(PUSH(pressVA));
+        if (p1 < 0) throw Error("press push not found");
+
+        Exe.SetUint32(n1 + 1, pushNormal); // 008AB82B -> 01016241
+        Exe.SetUint32(n2 + 1, pushNormal); // 008AB845 -> 01016241
+        Exe.SetUint32(p1 + 1, pushPress);  // 008AB859 -> 01016270
+
+        const z1 = Exe.FindHex("6A 01", n1 - 0x40, n2 + 0x40);
+        if (z1 >= 0) Exe.SetUint8(z1 + 1, 0x00); // 008AB843 -> 6A 00
+        const z2 = Exe.FindHex("6A 02", n2 - 0x40, p1 + 0x40);
+        if (z2 >= 0) Exe.SetUint8(z2 + 1, 0x00); // 008AB857 -> 6A 00
+
+        return true;
+    }
+
+    $$(_ + '1.1 - Find the UIWindow::AddChild call - Extended search');
     
-	addr += prefix.byteCount();
-	
-    $$(_ + '1.2 - NOP the call')
-    Exe.SetHex(addr, ADD(ESP, 4) + NOP2); // 5 for the call
+    const suffix = CALL(ALLWC);
+    let addr = -1;
+    let foundPattern = '';
+
+    // Primeira tentativa: padrões conhecidos baseados na versão
+    if (ROC.FullVer == 14.29) {
+        $$(_ + '1.1a - Trying VC14.29 patterns');
+        
+        // Valores possíveis para diferentes datas de build
+        const possibleValues = [
+            Exe.BuildDate > 20240000 ? 0x223 : 0x221,
+            0x222, 0x221, 0x223, 0x224, 0x225, 0x21E
+        ];
+        
+        for (const val of possibleValues) {
+            const prefix = 
+                PUSH(val)               //push trait button ID
+            +   MOV(R32, [R32])         //mov regA, dword ptr [regB]
+            +   CALL([R32, POS2WC])     //call dword ptr [regA + dispA]
+            +   PUSH([R32, POS2WC])     //push dword ptr [regC + dispC]
+            +   MOV(ECX, R32)           //mov ecx, regD
+            ;
+            
+            addr = Exe.FindHex(prefix + suffix);
+            if (addr >= 0) {
+                foundPattern = `VC14.29 pattern with value ${val.toHex()}`;
+                addr += prefix.byteCount();
+                break;
+            }
+        }
+        
+        // Padrão alternativo para VC14.29
+        if (addr < 0) {
+            for (const val of possibleValues) {
+                const prefix = 
+                    PUSH(val)               //push trait button ID
+                +   MOV(R32, [R32, POS2WC]) //mov regA, dword ptr [regB + disp]
+                +   PUSH([R32, POS2WC])     //push dword ptr [regC + dispC]
+                +   MOV(ECX, R32)           //mov ecx, regD
+                ;
+                
+                addr = Exe.FindHex(prefix + suffix);
+                if (addr >= 0) {
+                    foundPattern = `VC14.29 alternative pattern with value ${val.toHex()}`;
+                    addr += prefix.byteCount();
+                    break;
+                }
+            }
+        }
+    }
+    else {
+        $$(_ + '1.1b - Trying older compiler patterns');
+        
+        // Padrão original para compiladores mais antigos
+        const possibleValues = [0x21E, 0x221, 0x222, 0x223, 0x224];
+        
+        for (const val of possibleValues) {
+            const prefix = 
+                MOV([EAX, WC], val)     //mov dword ptr [eax + offset], trait_id
+            +   PUSH([ESI, POS2WC])     //push dword ptr [esi + dispA]
+            ;
+            
+            addr = Exe.FindHex(prefix + suffix);
+            if (addr >= 0) {
+                foundPattern = `Legacy pattern with value ${val.toHex()}`;
+                addr += prefix.byteCount();
+                break;
+            }
+        }
+        
+        // Padrões alternativos para compiladores mais antigos
+        if (addr < 0) {
+            for (const val of possibleValues) {
+                const patterns = [
+                    // Variação 1: diferentes registradores
+                    MOV([ECX, WC], val) + PUSH([EDI, POS2WC]),
+                    // Variação 2: PUSH direto
+                    PUSH(val) + PUSH([ESI, POS2WC]),
+                    // Variação 3: MOV para registrador primeiro
+                    MOV(EAX, val) + MOV([ESI, WC], EAX) + PUSH([ESI, POS2WC]),
+                ];
+                
+                for (let i = 0; i < patterns.length; i++) {
+                    addr = Exe.FindHex(patterns[i] + suffix);
+                    if (addr >= 0) {
+                        foundPattern = `Legacy alternative ${i} with value ${val.toHex()}`;
+                        addr += patterns[i].byteCount();
+                        break;
+                    }
+                }
+                if (addr >= 0) break;
+            }
+        }
+    }
+
+    // Terceira tentativa: busca mais ampla por AddChild calls
+    if (addr < 0) {
+        $$(_ + '1.1c - Trying broader AddChild call search');
+        
+        // Procura por qualquer PUSH seguido de CALL que possa ser AddChild
+        for (let val = 0x21D; val <= 0x230; val++) {
+            const patterns = [
+                PUSH(val) + MOV(ECX, R32) + CALL(ALLWC),
+                PUSH(val) + PUSH(R32) + MOV(ECX, R32) + CALL(ALLWC),
+                MOV(R32, val) + PUSH(R32) + MOV(ECX, R32) + CALL(ALLWC),
+            ];
+            
+            for (let i = 0; i < patterns.length; i++) {
+                addr = Exe.FindHex(patterns[i]);
+                if (addr >= 0) {
+                    // Verificar se este call está em contexto de criação de UI
+                    const contextCheck = Exe.FindHex(PUSH_STR("status"), addr - 50, addr + 50);
+                    if (contextCheck >= 0) {
+                        foundPattern = `Broad search pattern ${i} with value ${val.toHex()}`;
+                        addr += patterns[i].byteCount() - 4; // posiciona no CALL
+                        break;
+                    }
+                }
+            }
+            if (addr >= 0) break;
+        }
+    }
+
+    if (addr < 0) {
+        $$(_ + '1.1d - Pattern not found. Performing diagnostic search...');
+        
+        // Debug: procurar por strings relacionadas
+        const statusTexts = ["status", "trait", "button", "window"];
+        for (const text of statusTexts) {
+            const textAddr = Exe.FindText(text, CASE_INSENSITIVE);
+            if (textAddr >= 0) {
+                $$(_ + `Found "${text}" text at ${textAddr.toHex(8)}`);
+                
+                // Procurar calls próximos ao texto
+                const nearCall = Exe.FindHex(CALL(ALLWC), textAddr - 100, textAddr + 100);
+                if (nearCall >= 0) {
+                    $$(_ + `Found potential AddChild call near "${text}" at ${nearCall.toHex(8)}`);
+                }
+            }
+        }
+        
+        throw Error('UIWindow::AddChild call for Trait button not found. Check debug logs for clues.');
+    }
+    
+    $$(_ + `1.2 - NOPing AddChild call at ${addr.toHex(8)} (${foundPattern})`);
+    
+    // Determinar o tipo de call e aplicar o patch apropriado
+    const callOpcode = Exe.GetUint8(addr);
+    if (callOpcode === 0xE8) { // CALL rel32
+        Exe.SetHex(addr, ADD(ESP, 4) + NOP2); // 5 bytes: NOP the call
+    } else if (callOpcode === 0xFF) { // CALL r/m32
+        const modRM = Exe.GetUint8(addr + 1);
+        const callSize = ((modRM & 0xC0) === 0x80) ? 6 : 2; // determina tamanho baseado no ModR/M
+        Exe.SetNOPs(addr, callSize);
+    } else {
+        // Fallback: NOP 5 bytes (tamanho padrão de call)
+        Exe.SetNOPs(addr, 5);
+    }
 
     return true;
 };
@@ -109,5 +362,11 @@ HideTraitStatusButton = function()
 ///
 HideTraitStatusButton.validate = function()
 {
-	return Exe.BuildDate >= 20200916; // Roughly this date, still needs confirmation
+	if (Exe.BuildDate >= 20240100) {
+		const bmpNormal = Exe.FindText(
+			"\xC0\xAF\xC0\xFA\xC0\xCE\xC5\xCD\xC6\xE4\xC0\xCC\xBD\xBA\\statuswnd\\expand_on_normal.bmp"
+		);
+		return (bmpNormal > 0);
+	}
+	return (Exe.BuildDate >= 20200916);
 };
