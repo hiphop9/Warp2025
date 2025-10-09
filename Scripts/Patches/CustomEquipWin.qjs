@@ -117,28 +117,50 @@ NoEquipWinTitle = function(_)
 {
 	if (Exe.BuildDate >= 20240000)
 	{
-		const pat1 = "75 2E 8B BF CC 00 00 00 68 58 0C 00 00 E8 ?? ?? ?? ?? 68 7D 0A 00 00 8B F0 E8 ?? ?? ?? ??";
-		const p1 = Exe.FindHex(pat1);
-		if (p1 >= 0) Exe.SetUint8(p1, 0xEB);
+		let prefix =
+			JNZ(0x2E)
+		+	MOV(EDI, [EDI, POS2WC])
+		+	PUSH(0x0C58)
+		+	CALL(ALLWC)
+		+	PUSH(0x0A7D)
+		+	MOV(ESI, EAX)
+		+	CALL();
 
-		const pat2 = "8B 96 00 01 00 00 83 F9 02 89 8E D0 00 00 00 8B CA 8B 02 8B 40 38";
-		const tgt  = Exe.FindHex(pat2);
-		if (tgt < 0) throw Error("Pattern#2 not found");
+		let addr = Exe.FindHex(prefix);
+		if (addr < 0)
+			throw Error("Pattern#1 not found");
+
+		Exe.SetUint8(addr, 0xEB); // JNZ → JMP
+
+		let prefix2 =
+			MOV(EDX, [ESI, 0x100])
+		+	CMP(ECX, 0x02)
+		+	MOV([ESI, 0xD0], ECX)
+		+	MOV(ECX, EDX)
+		+	MOV(EAX, [EDX])
+		+	MOV(EAX, [EAX, 0x38]);
+
+		const tgt = Exe.FindHex(prefix2);
+		if (tgt < 0)
+			throw Error("Pattern#2 not found");
 
 		const ret_phy = tgt + 6;
 		const ret_va  = Exe.Phy2Vir(ret_phy, CODE);
 
-		function le32(v){
-			const s = ("00000000"+v.toString(16)).slice(-8);
-			return s.match(/../g).reverse().join(" ");
-		}
+		const hookCode =
+			CMP(ECX, 0x02)
+		+	JNZ(0x01)
+		+	INC(ECX)
+		+	JMP(0x04)
+		+	WCp + WCp + WCp + WCp
+		+	MOV(EDX, [ESI, 0x100])
+		+	JMP(0x03)
+		+	WCp + WCp + WCp
+		+	PUSH(ret_va)
+		+	"C3" + "00";
 
-		const parts = [
-			"83 F9 02 75 01 41 EB 04 00 00 00 00 8B 96 00 01 00 00 EB 03 00 00 00 "
-		  + "68 " + le32(ret_va) + " C3 00"
-		];
+		AutoHook(tgt, [hookCode], { nops: 0 });
 
-		AutoHook(tgt, parts, { nops: 0 });
 		return true;
 	}
 
