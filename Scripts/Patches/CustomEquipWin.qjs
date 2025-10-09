@@ -115,6 +115,55 @@ NoEquipSwap.validate = () =>
 ///
 NoEquipWinTitle = function(_)
 {
+	if (Exe.BuildDate >= 20240000)
+	{
+		let prefix =
+			JNZ(0x2E)
+		+	MOV(EDI, [EDI, POS2WC])
+		+	PUSH(0x0C58)
+		+	CALL(ALLWC)
+		+	PUSH(0x0A7D)
+		+	MOV(ESI, EAX)
+		+	CALL();
+
+		let addr = Exe.FindHex(prefix);
+		if (addr < 0)
+			throw Error("Pattern#1 not found");
+
+		Exe.SetUint8(addr, 0xEB); // JNZ → JMP
+
+		let prefix2 =
+			MOV(EDX, [ESI, 0x100])
+		+	CMP(ECX, 0x02)
+		+	MOV([ESI, 0xD0], ECX)
+		+	MOV(ECX, EDX)
+		+	MOV(EAX, [EDX])
+		+	MOV(EAX, [EAX, 0x38]);
+
+		const tgt = Exe.FindHex(prefix2);
+		if (tgt < 0)
+			throw Error("Pattern#2 not found");
+
+		const ret_phy = tgt + 6;
+		const ret_va  = Exe.Phy2Vir(ret_phy, CODE);
+
+		const hookCode =
+			CMP(ECX, 0x02)
+		+	JNZ(0x01)
+		+	INC(ECX)
+		+	JMP(0x04)
+		+	WCp + WCp + WCp + WCp
+		+	MOV(EDX, [ESI, 0x100])
+		+	JMP(0x03)
+		+	WCp + WCp + WCp
+		+	PUSH(ret_va)
+		+	"C3" + "00";
+
+		AutoHook(tgt, [hookCode], { nops: 0 });
+
+		return true;
+	}
+
 	$$(_, 1, `Find the location where equipment function is called`)
 	let prefix, suffix;
 	if (ROC.FullVer == 14.29)
@@ -179,5 +228,8 @@ NoEquipWinTitle = function(_)
 ///
 /// \brief Disable for Older Clients - Check for Reference
 ///
-NoEquipWinTitle.validate = () =>
-	(ROC.IsRenewal && Exe.BuildDate >= 20141126) || Exe.BuildDate >= 20150225;
+NoEquipWinTitle.validate = function()
+{
+	if (Exe.BuildDate >= 20240000) return true;
+	return (ROC.IsRenewal && Exe.BuildDate >= 20141126) || Exe.BuildDate >= 20150225;
+};
