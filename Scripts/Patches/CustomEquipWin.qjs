@@ -115,6 +115,33 @@ NoEquipSwap.validate = () =>
 ///
 NoEquipWinTitle = function(_)
 {
+	if (Exe.BuildDate >= 20240000)
+	{
+		const pat1 = "75 2E 8B BF CC 00 00 00 68 58 0C 00 00 E8 ?? ?? ?? ?? 68 7D 0A 00 00 8B F0 E8 ?? ?? ?? ??";
+		const p1 = Exe.FindHex(pat1);
+		if (p1 >= 0) Exe.SetUint8(p1, 0xEB);
+
+		const pat2 = "8B 96 00 01 00 00 83 F9 02 89 8E D0 00 00 00 8B CA 8B 02 8B 40 38";
+		const tgt  = Exe.FindHex(pat2);
+		if (tgt < 0) throw Error("Pattern#2 not found");
+
+		const ret_phy = tgt + 6;
+		const ret_va  = Exe.Phy2Vir(ret_phy, CODE);
+
+		function le32(v){
+			const s = ("00000000"+v.toString(16)).slice(-8);
+			return s.match(/../g).reverse().join(" ");
+		}
+
+		const parts = [
+			"83 F9 02 75 01 41 EB 04 00 00 00 00 8B 96 00 01 00 00 EB 03 00 00 00 "
+		  + "68 " + le32(ret_va) + " C3 00"
+		];
+
+		AutoHook(tgt, parts, { nops: 0 });
+		return true;
+	}
+
 	$$(_, 1, `Find the location where equipment function is called`)
 	let prefix, suffix;
 	if (ROC.FullVer == 14.29)
@@ -179,5 +206,8 @@ NoEquipWinTitle = function(_)
 ///
 /// \brief Disable for Older Clients - Check for Reference
 ///
-NoEquipWinTitle.validate = () =>
-	(ROC.IsRenewal && Exe.BuildDate >= 20141126) || Exe.BuildDate >= 20150225;
+NoEquipWinTitle.validate = function()
+{
+	if (Exe.BuildDate >= 20240000) return true;
+	return (ROC.IsRenewal && Exe.BuildDate >= 20141126) || Exe.BuildDate >= 20150225;
+};

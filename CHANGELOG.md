@@ -18,6 +18,12 @@
 - HideNewwButtons
 - ShowNewButtons
 - RestoreBattlegroundUI
+- DisableTraitStatusButton
+- HideTraitStatusButton
+- Hide itemba
+- PreviewInTrader
+- Remove Eq Window Title
+
 
 # 2024-08-07 Changes
 
