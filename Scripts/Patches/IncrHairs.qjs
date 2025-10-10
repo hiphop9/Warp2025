@@ -30,41 +30,71 @@
 ////
 /// \brief Increases hairstyle limit by patching CMP/Push and fixes mid-headgear fallback.
 ///
-const IH_VA_PUSH = 0x00D4EE74; // should be: 68 xx xx xx xx     (push imm32)
-const IH_VA_CMP  = 0x00D4EEF7; // should be: 81 FF xx xx xx xx  (cmp edi, imm32)
 
 IncrHairs = function(patchName) {
-    if (Exe.BuildDate < 20250000)
-        throw Error("Only 2025+ clients supported by this trimmed patch.");
+    if (Exe.BuildDate < 20241100)
+        throw Error("Only 2024+ clients supported by this patch.");
 
     let maxHairs;
     if (patchName === "Allow65kHairs") {
         maxHairs = 65535;
     } else if (patchName === "IncrHairStyles") {
-        maxHairs = Exe.GetUserInput('$maxHairs', D_Uint16,
-            "Limit input", "Enter the maximum no of hairstyles",
-            100, { saveDefault: true });
+        maxHairs = Exe.GetUserInput(
+            '$maxHairs', D_Uint16,
+            "Hairstyle Limit",
+            "Enter maximum hairstyle count (1–65535):",
+            100, { saveDefault: true }
+        );
         if (maxHairs === false) Cancel("Limit reverted to default");
-        maxHairs = Math.max(0, Math.min(65535, maxHairs|0));
+        maxHairs = Math.max(1, Math.min(65535, maxHairs|0));
     } else {
         maxHairs = CACHE.get('IH_Max') ?? 65535;
     }
     CACHE.put('IH_Max', maxHairs);
 
-    const PH_PUSH = Exe.Vir2Phy(IH_VA_PUSH);
-    const PH_CMP  = Exe.Vir2Phy(IH_VA_CMP);
+    const IH_PUSH_PAT_V1 =
+        "68 ?? ?? 00 00 E8 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? BF 01 00 00 00 C7 00 ?? ?? ?? ??";
+    const IH_PUSH_PAT_V2 =
+        "50 6A ?? E8 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? BF 01 00 00 00 C7 00 ?? ?? ?? ?? 90";
 
-    if (Exe.GetUint8(PH_PUSH) !== 0x68)
-        throw Error("Unexpected opcode at 0x00D4EE74: expected 0x68 (push imm32).");
+    let pushAddr = Exe.FindHex(IH_PUSH_PAT_V1);
+    let pushOpAddr = -1; // address of the actual PUSH opcode (68 or 6A)
+    if (pushAddr >= 0) {
+        pushOpAddr = pushAddr;                 // '68' starts at match
+    } else {
+        pushAddr = Exe.FindHex(IH_PUSH_PAT_V2);
+        if (pushAddr < 0)
+            throw Error("Could not find PUSH pattern near hair initialization.");
+        pushOpAddr = pushAddr + 1;             // skip '50', point to '6A'
+    }
 
-    if (!(Exe.GetUint8(PH_CMP) === 0x81 && Exe.GetUint8(PH_CMP + 1) === 0xFF))
-        throw Error("Unexpected opcode at 0x00D4EEF7: expected 0x81 0xFF (cmp edi, imm32).");
+    const IH_CMP_PAT =
+        "81 FF ?? 0B 00 00 7C ?? 8D 45 E8 C7 45 E8 ?? ?? ?? ?? 50 8D B3 7C 0F 00 00 68 ?? ?? 00 00";
+    const cmpAddr = Exe.FindHex(IH_CMP_PAT);
+    if (cmpAddr < 0)
+        throw Error("Could not find CMP pattern (edi comparison).");
 
-    Exe.SetInt32(PH_PUSH + 1, maxHairs & 0xFFFF); // 68 <imm32>
-    Exe.SetInt32(PH_CMP  + 2, maxHairs & 0xFFFF); // 81 FF <imm32>
+    const opPush = Exe.GetUint8(pushOpAddr);
+    if (opPush !== 0x68 && opPush !== 0x6A)
+        throw Error("Unexpected opcode at PUSH (expected 0x68 or 0x6A).");
+
+    if (!(Exe.GetUint8(cmpAddr) === 0x81 && Exe.GetUint8(cmpAddr + 1) === 0xFF))
+        throw Error("Unexpected opcode at CMP (expected 0x81 0xFF).");
+
+    if (opPush === 0x68) {
+        // push imm32
+        Exe.SetInt32(pushOpAddr + 1, maxHairs & 0xFFFF);
+    } else {
+        // push imm8
+        Exe.SetUint8(pushOpAddr + 1, maxHairs & 0xFF);
+    }
+
+    // cmp edi, imm32
+    Exe.SetInt32(cmpAddr + 2, maxHairs & 0xFFFF);
 
     return true;
 };
 
-Allow65kHairs  = IncrHairs;
-IncrHairStyles = IncrHairs;
+// Aliases so GUI shows two separate patch entries
+Allow65kHairs  = IncrHairs; // auto 65535, no input
+IncrHairStyles = IncrHairs; // manual input

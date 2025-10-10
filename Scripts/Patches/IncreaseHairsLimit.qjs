@@ -51,7 +51,7 @@ IncreaseHairsLimit = function()
 	const DoramLimitAddr = Exe.FindHex(DoramLimitPrefix + DoramLimitSuffix);
 	if (DoramLimitAddr < 0)
 	{
-		throw Error("1");
+		throw Error("Doram hair-limit pattern not found on CUIResourceMgr::GetHeadName.");
 	}
 
 	const HumanLimitPrefix =
@@ -67,7 +67,7 @@ IncreaseHairsLimit = function()
 	const HumanLimitAddr = Exe.FindHex(HumanLimitPrefix + HumanLimitSuffix, DoramLimitAddr, DoramLimitAddr + 0x80);
 	if (HumanLimitAddr < 0)
 	{
-		throw Error("2");
+		throw Error("Human hair-limit pattern not found near Doram limiter.");
 	}
 
 	//
@@ -75,27 +75,16 @@ IncreaseHairsLimit = function()
 	//
 
 	let Code =
-		PUSH(EAX)
-	+   PUSH(HumanHairLimit)
-	+   CALL(ALLWC)
-	+   MOV(EAX, [ESI])
-	+   MOV([EAX], POS3WC)
-	+   MOV(EAX, [ESI])
-	+   MOV([EAX, 4], POS3WC)
-	+   MOV(EAX, [ESI])
-	+   MOV([EAX, 8], POS3WC)
-	;
+		"50 6A 2B E8 ?? ?? ?? ?? 8B 06 C7 00 ?? ?? ?? ?? 8B 06 C7 40 04 ?? ?? ?? ?? 8B 06 C7 40 08 ?? ?? ?? ??";
 
 	const MaleHumanHairInitializationAddr = Exe.FindHex(Code);
 	if (MaleHumanHairInitializationAddr < 0)
-	{
-		throw Error("3");
-	}
+		throw Error("Failed to find Human (Male) hairstyle vector initialization.");
 
 	const FemaleHumanHairInitializationAddr = Exe.FindHex(Code, MaleHumanHairInitializationAddr + Code.byteCount(), MaleHumanHairInitializationAddr + 0x1F0);
 	if (FemaleHumanHairInitializationAddr < 0)
 	{
-		throw Error("4");
+		throw Error("Failed to find Human (Female) hairstyle vector initialization.");
 	}
 
 	Code =
@@ -108,13 +97,13 @@ IncreaseHairsLimit = function()
 	const MaleDoramHairInitializationAddr = Exe.FindHex(Code, FemaleHumanHairInitializationAddr + Code.byteCount(), FemaleHumanHairInitializationAddr + 0x1D0);
 	if (MaleDoramHairInitializationAddr < 0)
 	{
-		throw Error("5");
+		throw Error("Failed to find Doram (Male) hairstyle vector initialization.");
 	}
 
 	const FemaleDoramHairInitializationAddr = Exe.FindHex(Code, MaleDoramHairInitializationAddr + Code.byteCount(), MaleDoramHairInitializationAddr + 0x90);
 	if (FemaleDoramHairInitializationAddr < 0)
 	{
-		throw Error("6");
+		throw Error("Failed to find Doram (Female) hairstyle vector initialization.");
 	}
 
 	const VectorResizeCallAddr = Exe.GetTgtAddr(MaleHumanHairInitializationAddr + PUSH(EAX).byteCount() + PUSH(HumanHairLimit).byteCount() + 1);
