@@ -1,0 +1,152 @@
+RestoreCpsDll = function()
+{
+    const _ = 'RestoreCpsDll';
+    ROC.findImports();
+
+    //
+    // Find the required addresses (use _emblem.bmp as anchor)
+    //
+    const TextAddress = Exe.FindText("_emblem.bmp");
+    if (TextAddress < 0)
+        throw Error(_ + ' - Could not find the string "_emblem.bmp"');
+
+    const PushTextAddress = Exe.FindHex(PUSH(TextAddress));
+    if (PushTextAddress < 0)
+        throw Error(_ + ' - Required string is not being used.');
+
+    const CallAddress = Exe.FindHex(CALL(), PushTextAddress - 0x20, PushTextAddress);
+    if (CallAddress < 0)
+        throw Error(_ + ' - Call instruction could not be found.');
+
+    //
+    // Resolve target function VA (support E8 rel32 and FF / indirect calls)
+    //
+    let targetVA = -1;
+    const opcode = Exe.GetUint8(CallAddress); // use WARP API names
+
+    if (opcode == 0xE8) {
+        // direct relative call: E8 <rel32>
+        targetVA = Exe.GetTgtAddr(CallAddress + 1);
+    } else if (opcode == 0xFF) {
+        // indirect call variants: FF D0 (call eax), FF 15 xx xx (call [imm32]), etc.
+        const modrm = Exe.GetUint8(CallAddress + 1);
+
+        if (modrm == 0xD0) { // FF D0 => call eax
+            // Backtrace a small window to find where eax was loaded
+            const start = Math.max(0, CallAddress - 0x200);
+            for (let a = CallAddress - 1; a >= start; --a) {
+                const b = Exe.GetUint8(a);
+                if (b == 0xB8) { // mov eax, imm32
+                    targetVA = Exe.GetUint32(a + 1);
+                    break;
+                }
+                if (b == 0xA1) { // mov eax, [imm32]
+                    const ptr = Exe.GetUint32(a + 1);
+                    // read DWORD at ptr (ptr is VA)
+                    targetVA = Exe.GetUint32( Exe.Vir2Phy(ptr) );
+                    break;
+                }
+                // handle mov eax, [reg+disp] patterns? skipped for brevity
+            }
+        } else if (modrm == 0x15) { // FF 15 imm32 => call dword ptr [imm32]
+            const addrOfPtr = Exe.GetUint32(CallAddress + 2);
+            targetVA = Exe.GetUint32( Exe.Vir2Phy(addrOfPtr) );
+        } else {
+            // fallback: try a wider heuristic scan for mov eax or mov reg -> ptr patterns
+            const start = Math.max(0, CallAddress - 0x200);
+            for (let a = CallAddress - 1; a >= start; --a) {
+                const b = Exe.GetUint8(a);
+                if (b == 0xB8) {
+                    targetVA = Exe.GetUint32(a + 1);
+                    break;
+                }
+                if (b == 0xA1) {
+                    const ptr = Exe.GetUint32(a + 1);
+                    targetVA = Exe.GetUint32( Exe.Vir2Phy(ptr) );
+                    break;
+                }
+            }
+        }
+    } else {
+        throw Error(_ + ' - Unsupported call opcode 0x' + opcode.toString(16));
+    }
+
+    if (!(targetVA > 0))
+        throw Error(_ + ' - Could not resolve call target address.');
+
+    const TargetAddress = Exe.Vir2Phy(targetVA);
+
+    //
+    // Prepare data container (DLL handle storage + function pointer storage)
+    //
+    const [, CpsDllHandleVirtual] = Exe.Allocate(4);
+    const [, CpsUncompressPtrVirtual] = Exe.Allocate(4);
+
+    // Add two physical cps.dll strings to guarantee alignment / spacing
+    const [, CpsDllTextVirtual1] = Exe.AddText("cps.dll");
+    const [, CpsDllTextVirtual2] = Exe.AddText("cps.dll\x00"); // slight variant to avoid auto-merge
+    const [, CpsUncompressTextVirtual] = Exe.AddText("uncompress");
+
+    //
+    // Build injected code that:
+    //  - loads GetModuleHandleA("cps.dll") once and stores handle
+    //  - calls GetProcAddress(hModule, "uncompress") and caches pointer
+    //  - jumps to uncompress
+    //
+    let parts =
+    [ // part 0 - check cached module handle
+        MOV(EAX, [CpsDllHandleVirtual])
+    +   TEST(EAX, EAX)
+    +   JNE(Filler(1, 1)) // if non-zero, jump over loader
+
+    , // part 1 - call GetModuleHandleA("cps.dll")
+        PUSH(CpsDllTextVirtual1)
+    +   CALL([ROC.GetModHandle])
+    +   MOV([CpsDllHandleVirtual], EAX)
+
+    , // part 2 - check cached uncompress ptr
+        MOV(ECX, [CpsUncompressPtrVirtual])
+    +   TEST(ECX, ECX)
+    +   JNE(Filler(2, 1)) // if non-zero jump to JMP
+
+    , // part 3 - GetProcAddress(hModule, "uncompress")
+        PUSH(CpsUncompressTextVirtual)
+    +   PUSH(EAX) // reuse same hModule handle returned earlier in EAX
+    +   CALL([ROC.GetProcAddr])
+    +   MOV(ECX, EAX)
+    +   MOV([CpsUncompressPtrVirtual], ECX)
+
+    , // part 4 - jump to uncompress
+        JMP(ECX)
+    ];
+
+    // Fix filler sizes (short jumps)
+    parts[0] = SwapFillers(parts[0], { '1, 1' : parts[1].byteCount() });
+    parts[2] = SwapFillers(parts[2], { '2, 1' : parts[3].byteCount() });
+
+    // Concatenate machine code strings
+    let CodeCallCpsUncompress = "";
+    for (let i = 0; i < parts.length; ++i)
+        CodeCallCpsUncompress += parts[i];
+
+    // Allocate space for injected code (align 0x10)
+    const [CpsUncompress, CpsUncompressVirtual] =
+        Exe.Allocate(CodeCallCpsUncompress.byteCount(), 0x10);
+
+    // Write code and hook
+    Exe.SetHex(CpsUncompress, CodeCallCpsUncompress, CodeCallCpsUncompress.byteCount());
+    Exe.SetJMP(TargetAddress, CpsUncompressVirtual);
+
+    // Debug prints (useful to confirm addresses)
+    print(_ + ' - hooked VA: 0x' + targetVA.toString(16)
+          + ' (phy 0x' + TargetAddress.toString(16) + ')'
+          + ', trampoline VA: 0x' + CpsUncompressVirtual.toString(16));
+    print(_ + ' - strings: cps1=0x' + CpsDllTextVirtual1.toString(16)
+          + ', cps2=0x' + CpsDllTextVirtual2.toString(16)
+          + ', uncompress=0x' + CpsUncompressTextVirtual.toString(16));
+
+    return true;
+}
+
+RestoreCpsDll.validate = () =>
+	Exe.BuildDate > 20231000;

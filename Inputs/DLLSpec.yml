@@ -27,8 +27,8 @@
 ############################################################################
 
 -
-  Name: Splash.dll
-  Funcs: # List of either strings or ordinal numbers
-    - Name: "_DllMain@12"
-    - Ordinal: 41
+  Name: cps.dll
+  Funcs:
+    - Name: "compress"
+    - Ordinal: 1
  

@@ -206,6 +206,11 @@ CustomData:
             recommend : no
             author : Andrei Karas (4144), Asheraf
             desc : Changes the default zlib max decompression size used for captcha images to user specified value.
+        - RestoreCpsDll:
+            title : Restore Cps Dll
+            recommend : no
+            author : Andrei Karas (4144), Skylove
+            desc : Restore Cps.Dll
 
 DisableProtect:
     title : DISABLE PROTECTION

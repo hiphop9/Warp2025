@@ -111,6 +111,12 @@ CustomChar:
             author : Andrei Karas (4144) , X-EcutiOnner
             desc : Enables the display of damage digits on GvG maps.
 
+        - IncreaseHairsLimit:
+            title     : Increase Human/Doram Hair Limit
+            recommend : no
+            author    : Neo-Mind ,Skylove
+            desc      : Increases the maximum hairstyle limit for Human characters (up to 999).
+
 IncrHairs:
     title : INCREASE HAIRS
     mutex : true
