@@ -23,7 +23,9 @@
 - Hide itemba
 - PreviewInTrader
 - Remove Eq Window Title
-
+- IncreaseHairsLimit
+- RestoreCpsDll
+- CustomQSDelay
 
 # 2024-08-07 Changes
 

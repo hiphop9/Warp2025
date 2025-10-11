@@ -99,29 +99,39 @@ CustomQSDelay = function(_)
 	// when the time is expired anyways.. oh well.
 	if (newCL)
 	{
-		$$(_, 3.1, `Find the first use of g_qsTick`)
-		code =
-			MOV(R32, EAX)         // mov regA, eax
-		+	MOV(R32, POS3WC)      // mov regB, <offset#1>
-		+	SUB(R32, [g_qsTick])  // sub regA, dword ptr [g_qsTick]
-		;
-		const ui_addr = Exe.FindHex(code);
-		if (ui_addr < 0)
-			throw Error("UI quickswitch addr missing (VC14.29)");
+		$$(_, 3.1, `Find UI quickswitch anchor (robust for VC14.29+)`)
 
-		$$(_, 3.2, `Find the 3 comparisons to the default tick_ms value after it`)
-		code = 
-			PUSH_0
-		+	CMP(R32, old_tick_ms)	// cmp regA, old_tick_ms (default)
-		;
-		
-		addrs = Exe.FindHexN(3, code, ui_addr + 0x10, ui_addr + 0x90);
+		let code =
+			MOV(R32, EAX) +
+			MOV(R32, POS3WC) +
+			SUB(R32, [g_qsTick]);
+
+		let ui_addr = Exe.FindHex(code);
+
+		if (ui_addr < 0) {
+			code = SUB(R32, [g_qsTick]);
+			ui_addr = Exe.FindHex(code);
+			if (ui_addr < 0)
+				throw Error("UI quickswitch addr missing (VC14.29)");
+		}
+
+		const codeA = PUSH_0 + CMP(R32, old_tick_ms);
+		const codeB =               CMP(R32, old_tick_ms);
+
+		let addrs = Exe.FindHexN(3, codeA, ui_addr - 0x20, ui_addr + 0x120);
+		let mode  = 'A';
+
+		if (addrs.isEmpty()) {
+			addrs = Exe.FindHexN(3, codeB, ui_addr - 0x20, ui_addr + 0x120);
+			mode  = 'B';
+		}
 		if (addrs.isEmpty())
-			throw Error("Required 3 comparisons missing");
-		
-		$$(_, 3.3, `Replace all the ms tick values`)
-		off = code.byteCount() - 4;
-		addrs.forEach( memAddr => Exe.SetUint32(memAddr + off, new_tick_ms) );
+			throw Error("Required 3 comparisons missing (UI)");
+
+		$$(_, 3.3, `Replace UI ms tick values`)
+
+		if (mode === 'A') addrs.forEach(a => Exe.SetUint32(a + 4, new_tick_ms));
+		else              addrs.forEach(a => Exe.SetUint32(a + 2, new_tick_ms));
 	}
 	else
 	{
