@@ -49,41 +49,21 @@ CustomPath = function(_)
 
 	if (addr < 0 && ROC.FullVer == 14.29 && _ === 'CustomPrivAirplaneLub')
 	{
-		const loc0 = [EBP, WCn],
-		      loc1 = [EBP, WCn],
-		      loc2 = [EBP, WCn],
-		      loc3 = [EBP, WCn];
-		const parts =
-		[
-			PUSH(0x20)
-		+	MOV(loc0, 0xF)
-		+	MOV(BYTE_PTR, loc1, 0)
-		+	CALL(ALLWC),
+		const aLoad1 = Exe.FindHex(MOVUPS(XMM0, [nameAddr]));
+		if (aLoad1 < 0)
+			throw Error("PrivAirplane: MOVUPS XMM0,[name] not found");
 
-			MOVUPS(XMM0, [nameAddr]),
+		const cmovPush = Exe.FindHex(
+			CMOVAE(EAX, [EBP, -0x28]) + PUSH(EAX),
+			aLoad1, aLoad1 + 0x120
+		);
+		if (cmovPush < 0)
+			throw Error("PrivAirplane: CMOVAE/PUSH site not found");
 
-			MOV(ECX, EAX)
-		+	MOV(loc2, 0x1F)
-		+	MOV(loc3, 0x1F),
-
-			MOVUPS([ECX], XMM0)
-		+	MOVQ(XMM0, [nameAddr + 0x10])
-		+	MOVQ([ECX, 0x10], XMM0)
-		+	MOV(EAX, [nameAddr + 0x18])
-		+	MOV([ECX, 0x18], EAX)
-		+	MOV(AX, [nameAddr + 0x1C])
-		+	MOV([ECX, 0x1C], AX)
-		+	MOV(AL, [nameAddr + 0x1E])
-		+	MOV([ECX, 0x1E], AL)
-		+	MOV(BYTE_PTR, [ECX, 0x1F], 0)
-		];
+		refAddrs = ['PATCH_PRIVAIRPLANE_CMOV2PUSH', cmovPush];
 		dest = ECX;
-		addr = Exe.FindHex(parts);
-		if (addr > 0)
-			refAddrs = MapAddrs(addr, parts);
 	}
 
-	// spopup
 	if (addr < 0 && ROC.FullVer == 14.29 && _ === 'CustomspopupLub')
 	{
 		let localPtr = [EBP, WCn];
@@ -113,9 +93,7 @@ CustomPath = function(_)
 	const isQuestQuali = (_ === 'CustomQuestQualiLub');
 	if (addr < 0 && isQuestQuali)
 	{
-		const nameCandidates = [
-			"System\\QuestClassificationInfo.lub"
-		];
+		const nameCandidates = [ "System\\QuestClassificationInfo.lub" ];
 		let strAddr = -1;
 		for (const s of nameCandidates)
 		{
@@ -134,7 +112,7 @@ CustomPath = function(_)
 		const searchFrom = aLoad1;
 		const searchTo   = aLoad1 + 0x80;
 		const storePats = [
-			MOVUPS([EAX], XMM0), // 0F 11 00
+			MOVUPS([EAX], XMM0),
 			MOVDQU ? MOVDQU([EAX], XMM0) : null,
 			MOVAPS ? MOVAPS([EAX], XMM0) : null
 		].filter(Boolean);
@@ -145,7 +123,7 @@ CustomPath = function(_)
 			if (pos > 0) { aStore1 = pos; break; }
 		}
 		if (aStore1 < 0)
-			throw Error("QuestQuali: first store [EAX],XMM0 not found near load");
+			throw Error("QuestQuali: store [EAX],XMM0 not found");
 
 		let term = MOV(BYTE_PTR, [EAX, 0x22], 0);
 		let termAt = Exe.FindHex(term, aStore1, aStore1 + 0x200);
@@ -163,10 +141,12 @@ CustomPath = function(_)
 		dest = EAX;
 	}
 
-	if (addr < 0 && !isQuestQuali)
-		throw Error(`'${name} not used`);
+	{
+		const hasSite = (addr >= 0) || !!refAddrs;
+		if (!hasSite && !isQuestQuali)
+			throw Error(`'${name} not used`);
+	}
 
-	$$(_, 1.4, `Get the new file name from user`);
 	const suf = strType === "Prefix" ? "without .lub" : "";
 	const newStr = Exe.GetUserInput(
 		varName, D_Text, `File ${strType}`,
@@ -176,66 +156,18 @@ CustomPath = function(_)
 	if (newStr === false)
 		Cancel(strType, name);
 
-	$$(_, 2.1, `Add the file name`);
 	const [, freeVir] = Exe.AddFromVar(varName);
-
 
 	if (refAddrs == undefined)
 	{
-		$$(_, 2.2, `Update the PUSHed address`);
 		Exe.SetUint32(addr + 1, freeVir);
 	}
 
-	else if (_ == 'CustomPrivAirplaneLub')
+	else if (Array.isArray(refAddrs) && refAddrs[0] === 'PATCH_PRIVAIRPLANE_CMOV2PUSH')
 	{
-		let dsize = newStr.length, offset = 0, code = '';
-		[
-			[0x10, MOVUPS, XMM0],
-			[0x08, MOVQ,   EAX],
-			[0x04, MOV,    EAX],
-			[0x01, MOV,    AL ]
-		].forEach(([fsize, cmd, reg]) =>
-		{
-			let nextOff = offset + fsize;
-			while (nextOff <= dsize) {
-				code += cmd(reg, [freeVir + offset])
-				     + cmd([ECX, offset], reg);
-				offset = nextOff;
-				nextOff += fsize;
-			}
-		});
-		code += MOV(BYTE_PTR, [ECX, offset], 0)
-		      + JMP(Filler(1));
-
-		Exe.SetInt8(refAddrs[0] + 1, newStr.length + 1);
-		Exe.SetNOPs(refAddrs[1], refAddrs[2] - refAddrs[1]);
-		AutoHook(refAddrs[3], code, { targets: {1: Exe.Phy2Vir(refAddrs[4], CODE)} });
-	}
-
-	else if (_ == 'CustomspopupLub')
-	{
-		let dsize = newStr.length, offset = 0, code = '';
-		[
-			[0x10, MOVUPS, XMM0],
-			[0x08, MOVQ,   EDX],
-			[0x04, MOV,    EDX],
-			[0x01, MOV,    DL ]
-		].forEach(([fsize, cmd, reg]) =>
-		{
-			let nextOff = offset + fsize;
-			while (nextOff <= dsize) {
-				code += cmd(reg, [freeVir + offset])
-				     + cmd([EAX, offset], reg);
-				offset = nextOff;
-				nextOff += fsize;
-			}
-		});
-		code += MOV(BYTE_PTR, [EAX, offset], 0)
-		      + JMP(Filler(1));
-
-		Exe.SetInt8(refAddrs[0] + 1, newStr.length + 1);
-		Exe.SetNOPs(refAddrs[1], refAddrs[2] - refAddrs[1]);
-		AutoHook(refAddrs[3], code, { targets: {1: Exe.Phy2Vir(refAddrs[4], CODE)} });
+		const cmovPush = refAddrs[1];
+		Exe.SetInt8 (cmovPush + 0, 0x68);
+		Exe.SetUint32(cmovPush + 1, freeVir);
 	}
 
 	else if (Array.isArray(refAddrs) && refAddrs[0] === 'HOOK_QUESTQUALI_TAIL')
@@ -260,14 +192,11 @@ CustomPath = function(_)
 			}
 		});
 
-		code += MOV(BYTE_PTR, [EAX, offset], 0) // NUL
+		code += MOV(BYTE_PTR, [EAX, offset], 0)
 		      + JMP(Filler(1));
 
 		Exe.SetNOPs(cutFrom, cutTo - cutFrom);
-
-		AutoHook(cutFrom, code, {
-			targets: {1: Exe.Phy2Vir(cutTo, CODE)}
-		});
+		AutoHook(cutFrom, code, { targets: { 1: Exe.Phy2Vir(cutTo, CODE) } });
 	}
 
 	return true;
