@@ -261,7 +261,7 @@ CustomUI:
             desc : Restores the hidden Battleground navigation button and re-enables Entry Queue UI.
 
         - HideItemba:
-            title : Hide Item ba
+            title : Hide Item bar
             recommend : no
             author : Skylove
             desc : Hides the Shortcut Item Bar (Open/Close buttons) from the user interface.
