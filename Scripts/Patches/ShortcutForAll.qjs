@@ -31,34 +31,16 @@
 ///
 ShortcutForAll = function(_)
 {
-	$$(_, 1, `Find all the item type switches (there should be 2 locations in total)`)
-	let parts = [
-		MOVZX(R32, BYTE_PTR, [EAX, POS3WC]) //movzx eax, byte ptr [eax + idxTbl]
-	,
-		JMP([4, R32, POS3WC])               //jmp dword ptr [eax*4 + jmpTbl]
-	,
-		''
-	,
-		JE(Exe.BuildDate > 20120700 ? POS2WC : WCp) //jmp _skip ; older clients have short jump
-	];
+    const pattern = "FF 24 85 ?? ?? ?? ?? 83 BD ?? ?? ?? ?? 00 0F 84 ?? ?? ?? ?? ??";
+    const addrs = Exe.FindHexN(pattern);
+    if (!addrs || addrs.length != 2)
+        throw Error("Expected 2 matches for switch");
 
-	parts[2] = CMP(ROC.HasFP ? [EBP, NEG3WC] : [ESP, POS3WC], 0); //cmp dword ptr [LOCAL.x], 0 ; bigger displacement
-	let addrs = Exe.FindHexN(parts);
+    const repl = "90 FF 25"; // NOP + JMP dword ptr [jmpTbl]
+    for (const addr of addrs)
+        Exe.SetHex(addr, repl);
 
-	parts[2] = CMP(ROC.HasFP ? [EBP, WCn] : [ESP, WCp], 0);       //cmp dword ptr [LOCAL.x], 0
-	addrs = addrs.concat(...Exe.FindHexN(parts));
-
-	if (addrs.length !== 2)
-		throw Error("Expected 2 matches for switch");
-
-	$$(_, 2, `Remove eax*4 for all of them`)
-	const repl = NOP + " FF 25";  //nop + jmp dword ptr [jmpTbl]
-	const offset = parts.byteCount(0);
-
-	for (const addr of addrs)
-		Exe.SetHex(addr + offset, repl);
-
-	return true;
+    return true;
 };
 
 ///

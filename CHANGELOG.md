@@ -12,7 +12,7 @@
 - License Screen Visibility
 - Enable Flag Animation
 - Ignore Palette errors
-- Allow 65k hair styles : Increase hair styles
+- Increase Human/Doram Hair Limit
 - IgnoreLuaErr
 - Enable Emblem hover for BG
 - HideNewwButtons
@@ -26,6 +26,7 @@
 - IncreaseHairsLimit
 - RestoreCpsDll
 - CustomQSDelay
+- Allow all items in Shortcut
 
 # 2024-08-07 Changes
 
