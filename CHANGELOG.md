@@ -27,6 +27,8 @@
 - RestoreCpsDll
 - CustomQSDelay
 - Allow all items in Shortcut
+- CustomInventoryExpandingLimit
+- CustomInventoryLimit 
 
 # 2024-08-07 Changes
 

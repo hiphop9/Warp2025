@@ -35,55 +35,63 @@
 ///
 CustomInventoryLimit = function(_)
 {
-	$$(_, 1, `Find the locations where the /%d string is referenced`)
-	let code;
-	if (Exe.Version > 11) //VC14.16
-	{
-		code =
-			LEA(EAX, [EBP, WC])	//lea eax, [LOCAL.x]
-		+	ADD(R32, 0x64)	    //add regA, 64h ; regA can be eax or ecx
-		+	PUSH_R   		    //push regA
-		+	PUSH(POS3WC)	    //push offset "/%d"
-		;
-	}
-	else if (Exe.BuildDate > 20181128) //VC11 newer
-	{
-		code =
-			ADD(R32, 0x64)	    //add regA, 64h ;regA can be EAX or ECX
-		+	PUSH_R   		    //push regA
-		+	LEA(EAX, [EBP, WC])	//lea eax, [LOCAL.x]
-		+	PUSH(POS3WC)	    //push offset "/%d"
-		;
-	}
-	else if (Exe.BuildDate > 20170000) //VC11 older
-	{
-		code =
-			PUSH(0x64)			//push 64h
-		+	LEA(EAX, [EBP, WC])	//lea eax, [LOCAL.x]
-		+	PUSH(POS3WC)		//push offset "/%d"
-		;
-	}
-	else
-	{
-		Cancel("No valid pattern known for older clients");
-	}
-
-	const addrs = Exe.FindHexN(code);
+	$$(_, 1, "Find the exact /%d display pattern (with add ecx,64)")
+	const pattern = "83 C1 64 51 68 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 83 C4 0C 8B C8 C7 45 ?? 03 00 00 00 83 79 ?? 10 72 02 8B 09 8B 43 ??";
+	const addrs = Exe.FindHexN(pattern);
 	if (addrs.isEmpty())
-		throw Error("Item count function missing");
+		throw Error("Item count function missing (pattern not found)");
 
-	$$(_, 2.1, `Retrieve the new value from user`)
+	$$(_, 2.1, "Retrieve user-defined max value")
 	const val = Exe.GetUserInput('$MaxItemCount', D_Uint32, "Limit Input", "Enter the max item count", 100, {max: 999});
 	if (val === true)
 		Cancel("Max Count", 100);
 
-	$$(_, 2.2, `Add the new string`)
+	$$(_, 2.2, "Add new string to .rdata")
 	const [free, freeVir] = Exe.AddText("/" + val);
 
-	$$(_, 2.3, `Replace all the references`)
-	const offset = code.byteCount() - 4;
+	$$(_, 2.3, "Patch the reference")
 	for (const matchAddr of addrs)
-		Exe.SetInt32(matchAddr + offset, freeVir);
+	{
+		const strAddr = matchAddr + 5;
+		Exe.SetInt32(strAddr, freeVir);
+	}
 
+	return true;
+};
+
+
+CustomInventoryExpandingLimit = function(_)
+{
+	$$(_, 1, "Find the hardcoded 0x64 (100) limits used for inventory expanding")
+
+	// Two patterns where ECX is loaded with 0x64 (100)
+	const pattern1 = "55 8B EC 8B 45 08 B9 64 00 00 00 0F B7 40 02 66 3B C8 7C 24";
+	const pattern2 = "B9 64 00 00 00 66 3B C8 0F 8C ?? ?? ?? ?? 98 A3 ?? ?? ?? ?? E9 ?? ?? ?? ??";
+
+	const addr1 = Exe.FindHex(pattern1);
+	const addr2 = Exe.FindHex(pattern2);
+
+	if (!addr1 || !addr2)
+		throw Error("One or both inventory expanding limit patterns not found.");
+
+	$$(_, 2.1, "Ask user for new expanding limit value")
+	const val = Exe.GetUserInput(
+		'$InventoryExpandMax',
+		D_Uint32,
+		"Inventory Expanding Limit",
+		"Enter the new inventory expanding limit (default: 100)",
+		100,
+		{max: 999999}
+	);
+	if (val === true)
+		Cancel("Inventory Expanding Limit", 100);
+
+	$$(_, 2.2, "Patch both 0x64 constants with new value")
+
+	// mov ecx, XXXXXXXX → replace 0x64 with user value
+	Exe.SetInt32(addr1 + 7, val);
+	Exe.SetInt32(addr2 + 1, val);
+
+	$$(_, 3, `Inventory expanding limit successfully updated to ${val}`)
 	return true;
 };

@@ -115,7 +115,13 @@ CustomUI:
             recommend : no
             author : CH.C (jchcc) , Neo-Mind
             desc : Change the Maximum no of items displayed in inventory to user specified value (Need to be changed server-side as well).
-        
+
+        - CustomInventoryExpandingLimit:
+            title : Change limit for cash inventory expanding value
+            recommend : no
+            author : 4144,Skylove
+            desc : Expand the maximum cash inventory item limit (default 100) to a user-specified value up to 999,999. (Server-side adjustment may be required.)
+            
         - DeleteCharWithEmail:
             title : Always use email for Char Deletion
             recommend : no
