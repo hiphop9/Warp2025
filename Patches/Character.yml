@@ -117,22 +117,22 @@ CustomChar:
             author    : Neo-Mind ,Skylove
             desc      : Increases the maximum hairstyle limit for Human characters (up to 999).
 
-IncrHairs:
-    title : INCREASE HAIRS
-    mutex : true
-    
-    patches:
-        - Allow65kHairs:
-            title: Allow 65k hair styles
-            recommend : no
-            author : Ai4rei/AN, Neo-Mind
-            desc : Raises the maximum hairstyle limit to 65535 from the default value.
-        
-        - IncrHairStyles:
-            title: Increase hair styles
-            recommend : no
-            author : Ai4rei/AN, Neo-Mind
-            desc : Raises the maximum hairstyle limit to user specified value (upto 65535).
+#IncrHairs:
+#    title : INCREASE HAIRS
+#    mutex : true
+#    
+#    patches:
+#        - Allow65kHairs:
+#            title: Allow 65k hair styles
+#            recommend : no
+#            author : Ai4rei/AN, Neo-Mind
+#            desc : Raises the maximum hairstyle limit to 65535 from the default value.
+#        
+#        - IncrHairStyles:
+#            title: Increase hair styles
+#            recommend : no
+#            author : Ai4rei/AN, Neo-Mind
+#            desc : Raises the maximum hairstyle limit to user specified value (upto 65535).
 
 CustomAutoFollow:
     title : AUTO FOLLOW CUSTOMIZATION

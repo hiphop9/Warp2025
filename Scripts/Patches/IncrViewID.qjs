@@ -62,14 +62,13 @@ IncrViewID = function(_)
 
 	$$(_, 2.2, `Get the new limit from user`)
 	const varName = '$viewIDLimit';
-	const newValue = Exe.GetUserInput(varName, D_Uint32, "View ID Limit", "Enter the new Max Headgear View ID", oldValue, {min: oldValue, max: 64000});
-	if (newValue === false)
-		Cancel("Limit", oldValue);
+	const raw = Exe.GetUserInput(varName, D_Uint32, "View ID Limit",
+		"Enter the new Max Headgear View ID", oldValue, { min: oldValue, max: 32000 });
+	if (raw === false) return Cancel("Limit", oldValue);
 
-	$$(_, 2.3, `Replace old with new for all`)
+	$$(_ + '2.3 - Replace old with new for all')
 	for (const addr of addrs)
 		Exe.SetFromVar(Instr.FromAddr(addr).NextAddr - 4, varName);
-
 	return true;
 };
 

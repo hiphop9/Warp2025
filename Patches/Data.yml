@@ -109,7 +109,7 @@ CustomData:
             title : Increase headgear viewID limit
             recommend : no
             author : Shinryo
-            desc : Changes the limit for the headgear ViewIDs from default (1000-3000 depending on client) to User Defined value (max 64000).
+            desc : Changes the limit for the headgear ViewIDs from default (1000-3000 depending on client) to User Defined value (max 32000).
         
         - No3DBoneLimit:
             title : Remove 3D bones limit
