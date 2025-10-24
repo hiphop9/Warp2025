@@ -423,11 +423,11 @@ IgnoreErrors:
             author : X-EcutiOnner
             desc : Prevents the client from displaying error messages related to Entry Queue. Messages are sent to debugger instead. This does not guarantee the client will work in-spite of the errors.
 
-        - CustomAllJobAP:
-            title      : Custom All Job AP
-            recommend  : no
-            author     : Skylove 
-            desc       : Forces the client to enable the AP bar for all jobs. <br> This patch modifies the internal job check so that every class, regardless of its JobID, is treated as a 4th job and displays the AP gauge.
+#        - CustomAllJobAP:
+#            title      : Custom All Job AP
+#            recommend  : no
+#            author     : Skylove 
+#            desc       : Forces the client to enable the AP bar for all jobs. <br> This patch modifies the internal job check so that every class, regardless of its JobID, is treated as a 4th job and displays the AP gauge.
 
 MessageBox:
     title : MSGBOX CUSTOMIZATIONS
