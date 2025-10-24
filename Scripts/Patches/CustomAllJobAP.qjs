@@ -27,28 +27,75 @@
 *                                                                          *
 \**************************************************************************/
 
-// TODO - Not working for clients before 2017. Can't find the /%d in there either.
-//        Also fix the coloring for the prefix when it reaches 100
-
-///
-/// \brief Find the max item count display for inventory & replace with user specified value
-///
-
 CustomAllJobAP = function()
 {
-	const _ = 'CustomAllJobAP : ';
+    const _ = 'CustomAllJobAP_FullPatternSet_v2 : ';
+    $$(_, 1, "Start patching all defined patterns...");
 
-	$$(_, 1, "Find the 4th job check pattern");
-	const pattern = "55 8B EC 8B 4D 08 8D 81 64 EF FF FF 83 F8 2F 76 11";
-	const addr = Exe.FindHex(pattern);
-	if (addr < 0)
-		throw Error("Could not find the 4th job check function.");
+    function applyPattern(pattern, offset, patch, desc)
+    {
+        let pos = 0;
+        let cnt = 0;
+        while (true)
+        {
+            const at = Exe.FindHex(pattern, pos);
+            if (at < 0) break;
 
-	$$(_, 2, "Patch function to always return true (force AP for all jobs)");
-	// B0 01 C2 04 00 90 = mov al,1 ; ret 4 ; nop
-	const patch = "B0 01 C2 04 00 90";
-	Exe.SetHex(addr, patch);
+            const patchAddr = at + offset;
+            const before = Exe.GetHex(patchAddr, patch.split(' ').length) || "";
+            Exe.SetHex(patchAddr, patch);
+            const after = Exe.GetHex(patchAddr, patch.split(' ').length) || "";
+            $$(_, 10 + cnt, desc + " @0x" + patchAddr.toString(16) + " | before: " + before + " -> after: " + after);
 
-	$$(_, 3, "Successfully patched. All jobs now display AP bar.");
-	return true;
+            cnt++;
+            pos = at + 1;
+        }
+        $$(_, 50 + cnt, desc + " patched " + cnt + " time(s).");
+        return cnt;
+    }
+
+    // -------------------------------
+    applyPattern(
+        "E8 ?? ?? ?? ?? 3C 01 75 24 8B 86 EC 00 00 00 89 86 D8 00 00 00 8B 86 F0 00 00 00 89 86 94 00 00 00 8B 86 F4 00 00 00 89 86 98 00 00 00",
+        5, "90 90 90 90", "Pattern1 (cmp al,1 / jne 24)"
+    );
+
+    // -------------------------------
+    applyPattern(
+        "E8 ?? ?? ?? ?? 3C 01 75 0F 8B 8F DC 00 00 00 6A 53 6A 23 8B 01 FF 50 10 8B 8F A0 00 00 00 8B 47 14",
+        5, "90 90 90 90", "Pattern2 (cmp al,1 / jne 0F)"
+    );
+
+    // -------------------------------
+    applyPattern(
+        "E8 ?? ?? ?? ?? 8B 4B 18 8B 93 94 00 00 00 3C 01 75 3C 3B CA 75 16 8B CB E8 ?? ?? ?? ??",
+        14, "90 90 90 90", "Pattern3 (cmp al,1 / jne 3C)"
+    );
+
+    // -------------------------------
+    applyPattern(
+        "E8 ?? ?? ?? ?? 3C 01 B9 47 00 00 00 0F 44 F1 8B 4D EC 56 68 DC 00 00 00 E8 ?? ?? ?? ??",
+        5, "90 90", "Pattern4 (cmp al,1)"
+    );
+
+    // -------------------------------
+    let pos = 0;
+    let cntC7 = 0;
+    const c7Pattern = "C7 40 24 00 00 00 00 75 50";
+    while (true)
+    {
+        const at = Exe.FindHex(c7Pattern, pos);
+        if (at < 0) break;
+        const patchAddr = at + 7; // 75 50 위치
+        const before = Exe.GetHex(patchAddr, 2) || "";
+        Exe.SetHex(patchAddr, "90 90");
+        const after = Exe.GetHex(patchAddr, 2) || "";
+        $$(_, 200 + cntC7, "C7 pattern @0x" + patchAddr.toString(16) + " | before: " + before + " -> after: " + after);
+        cntC7++;
+        pos = at + 1;
+    }
+    $$(_, 210, "C7 pattern patched " + cntC7 + " time(s).");
+
+    $$(_, 999, "All done. Check x32dbg or WARP log for changed bytes.");
+    return true;
 };
