@@ -27,7 +27,7 @@
 *                                                                          *
 \**************************************************************************/
 
-CustomAllJobAP = function()
+AllowAPBarforAllJobs = function()
 {
     const _ = 'CustomAllJobAP_FullPatternSet_v2 : ';
     $$(_, 1, "Start patching all defined patterns...");

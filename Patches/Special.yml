@@ -56,6 +56,12 @@ CustomSpecials:
             author : llchrisll , Neo-Mind
             desc : Adds the lua files provided by llchrisll to override the existing lua tables and functions. Please check this <a href="https://llchrisll.github.io/ROTPDocs/addons/#custom-lua-support">link</a> for more details.
 
+        - AllowAPBarforAllJobs:
+            title : Allow AP Bar for all Jobs
+            recommend : no
+            author : Skylove
+            desc : Allows the usage of AP Bar for all Jobs. This patch modifies the internal job check so that every class, regardless of its JobID, is treated as a 4th job and has the AP gauge displayed.
+
 CustomSkills:
     title : SKILL CUSTOMIZATIONS
     mutex : false
