@@ -308,9 +308,3 @@ PreviewInShop = function(_)
 
 	return true;
 };
-
-///
-NpcDialogueScrolling.validate = () => Exe.BuildDate >= 20240713;
-
-// 선택적으로 별칭
-EnableNpcDialogueScrolling = NpcDialogueScrolling;

@@ -62,11 +62,11 @@ CustomNW:
             author : Ai4rei/AN , Neo-Mind,Skylove
             desc : Ignores server-provided IP addresses when changing servers.
             
-        - NoHardCodedAddr:
-            title : Remove hardcoded address/port
-            recommend : yes
-            author :  Andrei Karas (4144)
-            desc : Remove hardcoded connection addresses and ports.
+#        - NoHardCodedAddr:
+#            title : Remove hardcoded address/port
+#            recommend : yes
+#            author :  Andrei Karas (4144)
+#            desc : Remove hardcoded connection addresses and ports.
         
         - EnableHttpEmblem:
             title : Fix HTTP emblem in client

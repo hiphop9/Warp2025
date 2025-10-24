@@ -1,0 +1,54 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2018-2024 CH.C (jchcc)                                   *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : CH.C (jchcc), Neo-Mind                                 *
+*   Created Date  : 2020-11-11                                             *
+*   Last Modified : 2024-08-08                                             *
+*                                                                          *
+\**************************************************************************/
+
+// TODO - Not working for clients before 2017. Can't find the /%d in there either.
+//        Also fix the coloring for the prefix when it reaches 100
+
+///
+/// \brief Find the max item count display for inventory & replace with user specified value
+///
+
+CustomAllJobAP = function()
+{
+	const _ = 'CustomAllJobAP : ';
+
+	$$(_, 1, "Find the 4th job check pattern");
+	const pattern = "55 8B EC 8B 4D 08 8D 81 64 EF FF FF 83 F8 2F 76 11";
+	const addr = Exe.FindHex(pattern);
+	if (addr < 0)
+		throw Error("Could not find the 4th job check function.");
+
+	$$(_, 2, "Patch function to always return true (force AP for all jobs)");
+	// B0 01 C2 04 00 90 = mov al,1 ; ret 4 ; nop
+	const patch = "B0 01 C2 04 00 90";
+	Exe.SetHex(addr, patch);
+
+	$$(_, 3, "Successfully patched. All jobs now display AP bar.");
+	return true;
+};
