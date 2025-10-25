@@ -29,6 +29,7 @@
 - Allow all items in Shortcut
 - CustomInventoryExpandingLimit
 - CustomInventoryLimit 
+- AllowAPBarforAllJobs
 
 # 2024-08-07 Changes
 

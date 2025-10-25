@@ -1,4 +1,33 @@
-CustomAllJobAP = function()
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2020-2024 Neo-Mind                                       *
+*   Copyright (C) 2020-2024 Andrei Karas (4144)                            *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Neo-Mind, Andrei (4144)                                *
+*   Created Date  : 2022-09-24                                             *
+*   Last Modified : 2024-08-30                                             *
+*                                                                          *
+\**************************************************************************/
+
+AllowAPBarforAllJobs = function()
 {
     const _ = 'CustomAllJobAP_FullPatternSet_v3 : ';
     $$(_, 1, "Start patching all defined patterns (with error check)...");
