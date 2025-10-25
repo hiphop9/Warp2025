@@ -1,36 +1,7 @@
-/**************************************************************************\
-*                                                                          *
-*   Copyright (C) 2018-2024 CH.C (jchcc)                                   *
-*   Copyright (C) 2020-2024 Neo-Mind                                       *
-*                                                                          *
-*   This file is a part of WARP project (specific to RO clients)           *
-*                                                                          *
-*   WARP is free software: you can redistribute it and/or modify           *
-*   it under the terms of the GNU General Public License as published by   *
-*   the Free Software Foundation, either version 3 of the License, or      *
-*   (at your option) any later version.                                    *
-*                                                                          *
-*   This program is distributed in the hope that it will be useful,        *
-*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
-*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
-*   GNU General Public License for more details.                           *
-*                                                                          *
-*   You should have received a copy of the GNU General Public License      *
-*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
-*                                                                          *
-*                                                                          *
-|**************************************************************************|
-*                                                                          *
-*   Author(s)     : CH.C (jchcc), Neo-Mind                                 *
-*   Created Date  : 2020-11-11                                             *
-*   Last Modified : 2024-08-08                                             *
-*                                                                          *
-\**************************************************************************/
-
 CustomAllJobAP = function()
 {
-    const _ = 'CustomAllJobAP_FullPatternSet_v2 : ';
-    $$(_, 1, "Start patching all defined patterns...");
+    const _ = 'CustomAllJobAP_FullPatternSet_v3 : ';
+    $$(_, 1, "Start patching all defined patterns (with error check)...");
 
     function applyPattern(pattern, offset, patch, desc)
     {
@@ -45,43 +16,47 @@ CustomAllJobAP = function()
             const before = Exe.GetHex(patchAddr, patch.split(' ').length) || "";
             Exe.SetHex(patchAddr, patch);
             const after = Exe.GetHex(patchAddr, patch.split(' ').length) || "";
-            $$(_, 10 + cnt, desc + " @0x" + patchAddr.toString(16) + " | before: " + before + " -> after: " + after);
+            $$(_, 10 + cnt, `${desc} @0x${patchAddr.toString(16)} | before: ${before} -> after: ${after}`);
 
             cnt++;
             pos = at + 1;
         }
-        $$(_, 50 + cnt, desc + " patched " + cnt + " time(s).");
+
+        if (cnt === 0)
+            throw Error(`${desc} pattern not found! Please verify client version or pattern.`);
+
+        $$(_, 50 + cnt, `${desc} patched ${cnt} time(s).`);
         return cnt;
     }
 
     // -------------------------------
     applyPattern(
-        "E8 ?? ?? ?? ?? 3C 01 75 24 8B 86 EC 00 00 00 89 86 D8 00 00 00 8B 86 F0 00 00 00 89 86 94 00 00 00 8B 86 F4 00 00 00 89 86 98 00 00 00",
+        "E8 ?? ?? ?? ?? 3C 01 75 24 8B 86 ?? ?? ?? ?? 89 86 ?? ?? ?? ?? 8B 86 ?? ?? ?? ?? 89 86 ?? ?? ?? ?? 8B 86 ?? ?? ?? ?? 89 86 ?? ?? ?? ??",
         5, "90 90 90 90", "Pattern1 (cmp al,1 / jne 24)"
     );
 
     // -------------------------------
     applyPattern(
-        "E8 ?? ?? ?? ?? 3C 01 75 0F 8B 8F DC 00 00 00 6A 53 6A 23 8B 01 FF 50 10 8B 8F A0 00 00 00 8B 47 14",
+        "E8 ?? ?? ?? ?? 3C 01 75 0F 8B ?? ?? ?? ?? ?? 6A 53 6A 23 8B 01 FF 50 ??",
         5, "90 90 90 90", "Pattern2 (cmp al,1 / jne 0F)"
     );
 
     // -------------------------------
     applyPattern(
-        "E8 ?? ?? ?? ?? 8B 4B 18 8B 93 94 00 00 00 3C 01 75 3C 3B CA 75 16 8B CB E8 ?? ?? ?? ??",
+        "E8 ?? ?? ?? ?? 8B 4B ?? 8B 93 ?? ?? ?? ?? 3C 01 75 3C 3B CA 75 16 8B CB E8 ?? ?? ?? ??",
         14, "90 90 90 90", "Pattern3 (cmp al,1 / jne 3C)"
     );
 
     // -------------------------------
     applyPattern(
-        "E8 ?? ?? ?? ?? 3C 01 B9 47 00 00 00 0F 44 F1 8B 4D EC 56 68 DC 00 00 00 E8 ?? ?? ?? ??",
+        "E8 ?? ?? ?? ?? 3C 01 B9 47 00 00 00 0F 44 F1 8B ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ??",
         5, "90 90", "Pattern4 (cmp al,1)"
     );
 
     // -------------------------------
     let pos = 0;
     let cntC7 = 0;
-    const c7Pattern = "C7 40 24 00 00 00 00 75 50";
+    const c7Pattern = "C7 40 24 00 00 00 00 75 ??";
     while (true)
     {
         const at = Exe.FindHex(c7Pattern, pos);
@@ -90,12 +65,15 @@ CustomAllJobAP = function()
         const before = Exe.GetHex(patchAddr, 2) || "";
         Exe.SetHex(patchAddr, "90 90");
         const after = Exe.GetHex(patchAddr, 2) || "";
-        $$(_, 200 + cntC7, "C7 pattern @0x" + patchAddr.toString(16) + " | before: " + before + " -> after: " + after);
+        $$(_, 200 + cntC7, `C7 pattern @0x${patchAddr.toString(16)} | before: ${before} -> after: ${after}`);
         cntC7++;
         pos = at + 1;
     }
-    $$(_, 210, "C7 pattern patched " + cntC7 + " time(s).");
 
+    if (cntC7 === 0)
+        throw Error("C7 pattern not found! Check for client structure changes.");
+
+    $$(_, 210, `C7 pattern patched ${cntC7} time(s).`);
     $$(_, 999, "All done. Check x32dbg or WARP log for changed bytes.");
     return true;
 };
