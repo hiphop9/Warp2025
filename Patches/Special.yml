@@ -59,7 +59,7 @@ CustomSpecials:
         - AllowAPBarforAllJobs:
             title : Allow AP Bar for all Jobs
             recommend : no
-            author : Skylove
+            author : Skylove, Singe-Horizontal
             desc : Allows the usage of AP Bar for all Jobs. This patch modifies the internal job check so that every class, regardless of its JobID, is treated as a 4th job and has the AP gauge displayed.
 
 CustomSkills:

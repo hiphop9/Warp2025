@@ -217,52 +217,75 @@ NoEncrForLC.validate = () =>
 ///
 NoPassEncr = function(_)
 {
-	$$(_, 1.1, `Ensure the LANGTYPE is loaded`)
-	LANGTYPE.load();
+    const _np = 'NoPassEncr : ';
+    $$(_np, 1, "Begin pattern-based NoPassEncr patching...");
 
-	$$(_, 1.2, `Find the langtype comparison for sending login packet inside CLoginMode::ChangeState`)
-	let code =
-		CMP(BYTE_PTR, [POS4WC], 0) //cmp byte ptr [g_passwordencrypt], 0
-	+	JNE(POS2WC)                //jne _skip
-	+	MOV(R32, [LANGTYPE])       //mov regA, dword ptr [g_serviceType]
-	+	TEST(R32, R32)             //test regA, regA
-	+	JZ(POS2WC)                 //jz _sendSSO -> Send SSO Packet (ID = 0x825. was 0x2B0 in Old clients)
-	+	CMP(R32, 0x12)             //cmp regA, 12h
-	+	JZ(POS2WC)                 //jz _sendSSO
-	;
+    function applyPatternFlexible(patterns, offset, patch, desc)
+    {
+        if (!Array.isArray(patterns))
+            patterns = [patterns];
 
-	let addr = Exe.FindHex(code);
-	if (addr < 0)
-		throw Error("Langtype comparison missing");
+        let totalPatched = 0;
 
-	$$(_, 1.3, `Move address to after the code`)
-	addr += code.byteCount();
+        for (let pidx = 0; pidx < patterns.length; pidx++)
+        {
+            const pattern = patterns[pidx];
+            let pos = 0;
+            let cnt = 0;
+            while (true)
+            {
+                const at = Exe.FindHex(pattern, pos);
+                if (at < 0)
+                    break;
 
-	$$(_, 2.1, `Find the langtype comparison with 7`)
-	code =
-		CMP(R32, 7)  //cmp regA, 7
-	+	JNE(WCp)     //jne short _to_nextcmp
-	;
-	addr = Exe.FindHex(code, addr, addr + 0x50);
-	if (addr < 0)
-		throw Error("Comparison with 7 missing");
+                const patchAddr = at + offset;
+                const before = Exe.GetHex(patchAddr, patch.split(' ').length) || "";
+                Exe.SetHex(patchAddr, patch);
+                const after = Exe.GetHex(patchAddr, patch.split(' ').length) || "";
+                $$(_np, 10 + totalPatched, `${desc} (pattern#${pidx+1}) @0x${patchAddr.toString(16)} | before: ${before} -> after: ${after}`);
+                cnt++;
+                totalPatched++;
+                pos = at + 1;
+            }
 
-	$$(_, 2.2, `Enforce the conditional jump`)
-	Exe.SetJMP(addr + 3);
+            if (cnt > 0)
+            {
+                $$(_np, 40 + pidx, `${desc} matched pattern#${pidx+1} and patched ${cnt} time(s).`);
+                break;
+            }
+            else
+            {
+                $$(_np, 60 + pidx, `${desc} pattern#${pidx+1} not found, trying next fallback (if any).`);
+            }
+        }
 
-	$$(_, 2.3, `Find the langtype comparison with 4 after it`)
-	code =
-		CMP(R32, 4)  //cmp regA, 7
-	+	JNE(WCp)     //jne short _skip#2
-	;
-	addr = Exe.FindHex(code, addr + 4, addr + 0x50);
-	if (addr < 0)
-		throw Error("Comparison with 4 missing");
+        if (totalPatched === 0)
+            throw Error(`${desc} pattern not found in any of the fallbacks!`);
 
-	$$(_, 2.4, `Enforce the conditional jump`)
-	Exe.SetJMP(addr + 3);
+        $$(_np, 50 + totalPatched, `${desc} total patched ${totalPatched} time(s).`);
+        return totalPatched;
+    }
 
-	return true;
+    applyPatternFlexible(
+        [
+            "75 ?? 6A 18 8D 45 D4",
+            "75 ?? 6A 18 8D 85 ?? ?? ?? ??"
+        ],
+        0,
+        "EB",
+        "Pattern1 (cmp/jne → jmp)"
+    );
+
+    // Pattern2: existing single pattern (add array if you want fallbacks)
+    applyPatternFlexible(
+        "EB ?? 83 F9 04 75 ?? 8D ?? ??",
+        5,
+        "EB",
+        "Pattern2 (cmp ecx,4 → jmp)"
+    );
+
+    $$(_np, 999, "All NoPassEncr patterns patched successfully.");
+    return true;
 };
 
 ///
