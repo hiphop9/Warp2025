@@ -8,7 +8,7 @@
 \**************************************************************************/
 
 ///
-/// \brief Modify Zoom to specific percentages (25%, 50%, 75%, Maximum)
+/// \brief Modify Zoom to specific percentages (25%, 50%, 67%, 75%, Maximum)
 ///
 IncrZoom = function(_) {
     $$(_, 1.1, `Search for the default zoom pattern in the executable`)
@@ -42,6 +42,7 @@ IncrZoom = function(_) {
 ///
 Zoom25Percent = IncrZoom;
 Zoom50Percent = IncrZoom;
+Zoom67Percent = IncrZoom;
 Zoom75Percent = IncrZoom;
 ZoomMax       = IncrZoom;
 
@@ -51,6 +52,7 @@ ZoomMax       = IncrZoom;
 IncrZoom.Data = MakeMap(
     'Zoom25Percent', "00 00 00 43 00 00",
     'Zoom50Percent', "00 00 FF 43 00 00",
-	'Zoom75Percent', "00 80 36 44 00 00",
+	'Zoom67Percent', "00 80 36 44 00 00",
+	'Zoom75Percent', "00 80 4C 44 00 00",
     'ZoomMax',       "00 00 99 44 00 00" 
 );
