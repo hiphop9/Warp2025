@@ -1,0 +1,188 @@
+/**************************************************************************\
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Skylove                                                *
+*   Created Date  : 2026-07-19                                             *
+*   Last Modified : 2026-07-19                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Make NPC selection menus (menu / select / switch) obey setdialogalign.
+///
+///        The client only applies setdialogalign to the `mes` dialog text
+///        (UITagTextViewer inside UISayDialogWnd). The selection list
+///        (UIListBox inside UIChooseWnd) always draws its items left aligned.
+///
+///        This patch hooks UIListBox::OnDraw right where the per-item X
+///        coordinate is finalized. For every item it reads the current
+///        horizontal align (0=LEFT / 1=RIGHT / 2=CENTER) that setdialogalign
+///        stored on the SayDialog's text viewer, measures the item width with
+///        the listbox font and recomputes X so the item is drawn
+///        left / centre / right aligned inside the list.
+///
+///        All version specific pieces (the SayDialog window getter, the window
+///        manager global, the text-viewer offset and the text-width function)
+///        are located by signature so the patch is not tied to one client.
+///
+AlignMenuText = function()
+{
+	const _ = 'AlignMenuText : ';
+
+	//===================================================================
+	// 1 - Locate the hook site inside UIListBox::OnDraw
+	//     The per-item X base is computed as [edi+D0h] - [edi+9Ch] and the
+	//     builtin (unused) align flag is tested with cmp byte [edi+CCh], 1.
+	//     These field offsets are stable across client versions.
+	//===================================================================
+	$$(_ + '1.1 - Find the OnDraw per-item X / align-flag block')
+	const drawCode =
+		" 8B 97 D0 00 00 00"   // mov edx, [edi+0D0h]   ; X base
+	+	" 8B 8F B8 00 00 00"   // mov ecx, [edi+0B8h]   ; row height
+	+	" 2B 97 9C 00 00 00"   // sub edx, [edi+9Ch]    ; X base -= scroll
+	+	" 0F AF CB"            // imul ecx, ebx         ; Y = row * height
+	+	" 80 BF CC 00 00 00 01"// cmp byte ptr [edi+0CCh], 1
+	+	" 89 55"               // mov [ebp + x], edx    ; (disp read below)
+	;
+
+	const dPhy = Exe.FindHex(drawCode);
+	if (dPhy < 0)
+		throw Error("UIListBox::OnDraw item block not found");
+
+	$$(_ + '1.2 - Derive hook point, X local slot and the continuation address')
+	const hookAddr = dPhy + 21;                 // the 'cmp byte [edi+0CCh], 1'
+	const xDisp    = Exe.GetInt8(dPhy + 30);    // ebp displacement of the X local
+
+	// Branch right after the flag check (jnz to the code that draws the item)
+	const jOpcode = Exe.GetUint8(dPhy + 31);
+	let contPhy;
+	if (jOpcode === 0x75)                        // short jnz
+		contPhy = dPhy + 33 + Exe.GetInt8(dPhy + 32);
+	else if (jOpcode === 0x0F)                   // near jnz (0F 85)
+		contPhy = dPhy + 37 + Exe.GetInt32(dPhy + 33);
+	else
+		throw Error("Unexpected branch after align flag check");
+
+	const contVir = Exe.Phy2Vir(contPhy, CODE);
+
+	//===================================================================
+	// 2 - Locate the setdialogalign setter to steal the SayDialog getter,
+	//     the window manager global and the text-viewer offset.
+	//     Layout:  push 10h ; mov ecx, <mgr> ; call <getter>
+	//              test eax,eax ; jz .. ; mov ecx, [eax + <viewer>]
+	//===================================================================
+	$$(_ + '2.1 - Find the setdialogalign setter')
+	const setCode =
+		" 6A 10"               // push 16                (SayDialog window id)
+	+	" B9 ?? ?? ?? ??"      // mov ecx, <windowMgr>
+	+	" E8 ?? ?? ?? ??"      // call UIWindowMgr::GetWnd
+	+	" 85 C0"               // test eax, eax
+	+	" 74 ??"               // jz short
+	+	" 8B 88 ?? ?? ?? ??"   // mov ecx, [eax + <viewerOffset>]
+	;
+
+	const sPhy = Exe.FindHex(setCode);
+	if (sPhy < 0)
+		throw Error("setdialogalign setter not found");
+
+	const mgrAddr    = Exe.GetUint32(sPhy + 3);      // window manager (immediate)
+	const getWndVir  = Exe.GetTgtAddr(sPhy + 8);     // UIWindowMgr::GetWnd (virtual)
+	const viewerOff  = Exe.GetUint32(sPhy + 18);     // SayDialog -> text viewer
+
+	//===================================================================
+	// 3 - Locate the text-width helper (returns cx of the measured string).
+	//     Its tail is compiler-identical across versions: it returns the
+	//     FIRST field ([ebp-14h]) of the measure result (the width), whereas
+	//     the sibling height helper returns [ebp-10h].
+	//===================================================================
+	$$(_ + '3.1 - Find the text-width helper')
+	const wTail =
+		" 8B 75 EC"                  // mov esi, [ebp-14h]   ; width (cx)
+	+	" C7 45 FC FF FF FF FF"      // mov [ebp-4], -1
+	+	" 8D 4D CC"                  // lea ecx, [ebp-34h]
+	+	" E8 ?? ?? ?? ??"            // call <dtor>
+	+	" 8B C6"                     // mov eax, esi
+	;
+
+	const wTailPhy = Exe.FindHex(wTail);
+	if (wTailPhy < 0)
+		throw Error("Text-width helper not found");
+
+	$$(_ + '3.2 - Walk back to the helper prologue')
+	const wStartPhy = Exe.FindLastHex("55 8B EC 6A FF 68", wTailPhy, wTailPhy - 0x120);
+	if (wStartPhy < 0)
+		throw Error("Text-width helper prologue not found");
+
+	const widthVir = Exe.Phy2Vir(wStartPhy, CODE);
+
+	//===================================================================
+	// 4 - Build the hook payload.
+	//
+	//   On entry (at the overwritten 'cmp'):
+	//     edx = default (left) X   ecx = Y   ebx = row   esi = item offset
+	//     edi = listbox 'this'
+	//
+	//   We fetch the align, measure the item and write the new X into the
+	//   same [ebp + x] local the original instruction would have set, then
+	//   jump to the item-draw continuation. LEFT / no-dialog falls back to
+	//   the original left X.
+	//===================================================================
+	$$(_ + '4.1 - Assemble the code cave')
+	const code =
+		" 60"                                 // pushad
+	+	" B9" + mgrAddr.toHex(4)              // mov ecx, <windowMgr>
+	+	" 6A 10"                              // push 16
+	+	CALL(Filler(1))                       // call UIWindowMgr::GetWnd
+	+	" 85 C0 74 4C"                        // test eax,eax ; jz .fallback
+	+	" 8B 80" + viewerOff.toHex(4)        // mov eax, [eax + <viewer>]
+	+	" 85 C0 74 42"                        // test eax,eax ; jz .fallback
+	+	" 0F B6 80 B4 00 00 00"              // movzx eax, byte [eax+0B4h]  ; hAlign
+	+	" 85 C0 74 37"                        // test eax,eax ; jz .fallback (LEFT)
+	+	" 50"                                 // push eax   ; save align
+	+	" 8B 87 88 00 00 00"                 // mov eax, [edi+88h]  ; item array
+	+	" 03 C6"                              // add eax, esi        ; -> item
+	+	" 83 78 14 10 72 02 8B 00"           // (std::string) if len>=10h: eax=[eax]
+	+	" 6A 00 6A 00 6A 0C 6A 00 6A 00"     // push 0,0,0Ch,0,0
+	+	" 50 8B CF"                           // push text ; mov ecx, edi (listbox)
+	+	CALL(Filler(2))                       // call <textWidth>  -> eax
+	+	" 59"                                 // pop ecx    ; align
+	+	" 8B 57 14 2B D0"                     // mov edx,[edi+14h] ; edx = listW - textW
+	+	" 83 F9 02 74 05"                     // cmp ecx,2 ; je .center
+	+	" 83 EA 02 EB 10"                     // RIGHT : edx -= 2 ; jmp .store
+	+	" D1 FA EB 0C"                        // .center: sar edx,1 ; jmp .store
+	+	" 8B 97 D0 00 00 00 2B 97 9C 00 00 00"// .fallback: edx = [edi+D0]-[edi+9C]
+	+	" 85 D2 79 02 31 D2"                 // .store: if (edx<0) edx = 0
+	+	" 89 55" + xDisp.toHex(1)            // mov [ebp + x], edx
+	+	" 61"                                 // popad
+	+	JMP(Filler(3))                        // jmp <continuation>
+	;
+
+	$$(_ + '4.2 - Plant it')
+	AutoHook(hookAddr, code,
+	{
+		targets :
+		{
+			1 : getWndVir,   // UIWindowMgr::GetWnd
+			2 : widthVir,    // text width helper
+			3 : contVir,     // item-draw continuation
+		},
+	});
+
+	return true;
+};
+
+///
+/// \brief Only for clients new enough to have setdialogalign (ZC_DIALOG_TEXT_ALIGN).
+///
+AlignMenuText.validate = () =>
+	Exe.BuildDate > 20210100 && Exe.FindHex(
+		" 0F AF CB 80 BF CC 00 00 00 01"
+	) > 0;

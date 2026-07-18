@@ -213,6 +213,18 @@ CustomData:
             author : Andrei Karas (4144), Skylove
             desc : Restore Cps.Dll
 
+        - UnlimitedPetTalk:
+            title : Unlimited pet talk entries
+            recommend : no
+            author : Skylove
+            desc : Removes the hardcoded pet list used for PetTalkTable.xml lookups. Pets missing from the client's built-in list of ~85 fall back to Poring's lines no matter what the xml holds. With this they read from a <pet[JobID]> tag instead - e.g. job 3321 reads <pet3321>. Existing pets keep their original tags so the xml needs no changes.
+
+        - DisableXmlObfuscation:
+            title : Use plain text talk tables
+            recommend : no
+            author : Skylove
+            desc : PetTalkTable.xml, MonsterTalkTable.xml and MonsterSkillInfo.xml are shipped scrambled with an Atbash substitution. This makes the client read them as plain text instead. Every xml going through that routine is affected, so all of them must be plain after applying it.
+
 DisableProtect:
     title : DISABLE PROTECTION
     mutex : false

@@ -1,0 +1,142 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2026 *Various authors*                                   *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+\**************************************************************************/
+/**************************************************************************\
+*                                                                          *
+*   Author(s)     : -                                                      *
+*   Created Date  : 2026-07-16                                             *
+*   Last Modified : 2026-07-16                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Removes the hardcoded pet limit for PetTalkTable.xml lookups.
+///
+///        The pet talk lookup resolves the pet's job ID into an XML tag name
+///        through a hardcoded switch holding roughly 85 pets. Every job ID
+///        missing from that switch lands on the default case, and the default
+///        case returns "poring". So any newly added pet silently speaks
+///        Poring's lines no matter what PetTalkTable.xml contains.
+///
+///        This patch reroutes the name lookup. When the switch hands back
+///        "poring" for anything other than the real Poring (job 1002), the tag
+///        name gets built from the job ID instead, giving "pet<jobID>".
+///
+///        Existing pets keep their original tags, so PetTalkTable.xml needs no
+///        changes at all. A new pet only needs its own entry added, e.g. job
+///        3321 (PAD_AMELIT) reads from <pet3321>.
+///
+///        Works on both obfuscated builds (where the switch decrypts its
+///        strings at runtime) and plain builds, since the comparison is done
+///        on the resulting string rather than on the returned pointer.
+///
+UnlimitedPetTalk = function()
+{
+	const _ = 'UnlimitedPetTalk : ';
+
+	$$(_ + '1.1 - Find the pet name lookup along with the inlined strcpy that follows it')
+	const code =
+		"FF 75 08"                //push dword ptr [ebp+8]     ; pet job id
+	+	"B9 ?? ?? ?? ??"          //mov ecx, <obj>             ; dead - callee overwrites ECX immediately
+	+	"E8 ?? ?? ?? ??"          //call GetPetTalkName
+	+	"8D 95 ?? ?? ?? ??"       //lea edx, [ebp - tagName]
+	+	"2B D0"                   //sub edx, eax
+	+	"0F 1F 44 00 00"          //nop dword ptr [eax+eax]
+	+	"8A 08"                   //@@copy:  mov cl, byte ptr [eax]
+	+	"8D 40 01"                //         lea eax, [eax+1]
+	+	"88 4C 02 FF"             //         mov byte ptr [edx+eax-1], cl
+	+	"84 C9"                   //         test cl, cl
+	+	"75 F3"                   //         jne @@copy
+	;
+
+	const addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Pet name lookup not found");
+
+	$$(_ + '1.2 - Extract the callee, the tagName stack offset and the address to return to')
+	const getName = Exe.GetTgtAddr(addr + 0x9);      //target of the CALL sitting at +8
+	const dispHex = Exe.GetHex(addr + 0xF, 4);       //disp32 of the LEA sitting at +D
+	const retVir  = Exe.Phy2Vir(addr + 0x27, CODE);  //instruction right after the 0x27 byte pattern
+
+	$$(_ + '1.3 - Ensure the print function has been imported')
+	ROC.findImports();
+
+	$$(_ + '2.1 - Prepare the replacement code')
+	const parts =
+	[
+		" FF 75 08"                //push dword ptr [ebp+8]      ; pet job id
+	,	CALL(Filler(1))            //call GetPetTalkName         ; EAX = tag name
+	,	" 8D 95" + dispHex         //lea edx, [ebp - tagName]
+
+	,	" 8A 08"                   //@@copy:  mov cl, byte ptr [eax]
+	,	" 88 0A"                   //         mov byte ptr [edx], cl
+	,	" 40"                      //         inc eax
+	,	" 42"                      //         inc edx
+	,	" 84 C9"                   //         test cl, cl
+	,	" 75 F6"                   //         jne @@copy
+
+	,	" 81 7D 08 EA 03 00 00"    //cmp dword ptr [ebp+8], 1002 ; the real Poring keeps its own tag
+	,	" 74 2E"                   //je @@done
+
+	,	" 8D 95" + dispHex         //lea edx, [ebp - tagName]
+	,	" 81 3A 70 6F 72 69"       //cmp dword ptr [edx], 'irop' ; did we land on the default case?
+	,	" 75 20"                   //jne @@done
+	,	" 66 81 7A 04 6E 67"       //cmp word ptr [edx+4], 'gn'
+	,	" 75 18"                   //jne @@done
+	,	" 80 7A 06 00"             //cmp byte ptr [edx+6], 0
+	,	" 75 12"                   //jne @@done
+
+	,	" FF 75 08"                //push dword ptr [ebp+8]      ; pet job id
+	,	PUSH(Filler(3))            //push offset "pet%d"
+	,	" 52"                      //push edx                    ; tagName
+	,	CALL([ROC.SprintF])        //call dword ptr [<&sprintf>] ; tagName = "pet<jobID>"
+	,	" 83 C4 0C"                //add esp, 0Ch
+
+	,	JMP(Filler(2))             //@@done:  jmp retVir
+	,	" 70 65 74 25 64 00"       //"pet%d", 0
+	];
+
+	$$(_ + '2.2 - Work out where the format string ends up inside the cave')
+	const fmtOffset = parts.slice(0, -1).join('').byteCount();
+
+	$$(_ + '3.1 - Drop the code into the diff section and JMP to it')
+	AutoHook(addr, parts.join(''),
+	{
+		localVals :
+		{
+			3 : fmtOffset,   //"pet%d"
+		},
+		targets :
+		{
+			1 : getName,
+			2 : retVir,
+		},
+		nops : 0x27 - 5,     //blank out the rest of the pattern we jumped away from
+	});
+
+	return true;
+};
+
+///
+/// \brief Only relevant for clients that actually ship a pet talk table.
+///
+UnlimitedPetTalk.validate = () =>
+	Exe.FindText("PetTalkTable.xml", PHYSICAL, false) > 0;

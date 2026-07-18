@@ -32,6 +32,12 @@ CustomUI:
     color : orangered
     
     patches:
+        - AlignMenuText:
+            title : Align NPC menu/select text
+            recommend : no
+            author : Skylove
+            desc : Makes NPC selection menus (<b>menu</b> / <b>select</b> / <b>switch</b>) obey <b>setdialogalign</b> just like <b>mes</b> dialog text, so menu items can be drawn left, centre or right aligned (e.g. for RTL languages). Located entirely by signature.
+
         - AllowShortcutsInWine:
             title : Allow shortcuts in WINE [Experimental]
             recommend : no

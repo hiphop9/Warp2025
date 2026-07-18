@@ -1,0 +1,91 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2026 *Various authors*                                   *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+\**************************************************************************/
+/**************************************************************************\
+*                                                                          *
+*   Author(s)     : -                                                      *
+*   Created Date  : 2026-07-16                                             *
+*   Last Modified : 2026-07-16                                             *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Makes the client read the talk table xml files as plain text.
+///
+///        PetTalkTable.xml, MonsterTalkTable.xml and MonsterSkillInfo.xml are
+///        shipped scrambled with an Atbash substitution (a<->z, A<->Z, plus a
+///        swap inside the 0xB0-0xBF byte range which covers euc-kr lead bytes).
+///        One symmetric routine handles both directions - the client runs every
+///        xml tag name through it before looking the tag up, and runs the text
+///        it gets back through it again on the way out.
+///
+///        That routine already carries a bypass - it returns the string
+///        untouched when a global flag is set, but nothing ever sets the flag.
+///        This patch turns the flag test into an unconditional jump so the
+///        bypass is always taken, letting the client work on unscrambled files.
+///
+///        Note this covers every xml that goes through the routine, so all of
+///        them need to be plain after applying it.
+///
+DisableXmlObfuscation = function()
+{
+	const _ = 'DisableXmlObfuscation : ';
+
+	$$(_ + '1.1 - Find the Atbash routine')
+	const code =
+		"55"                      //push ebp
+	+	"8B EC"                   //mov ebp, esp
+	+	"83 3D ?? ?? ?? ?? 00"    //cmp dword ptr [g_plainText], 0
+	+	"75 ??"                   //jne @@bypass               <- flip this one
+	+	"8B 4D 08"                //mov ecx, dword ptr [ebp+8]
+	+	"56"                      //push esi
+	+	"8B F1"                   //mov esi, ecx
+	+	"8D 56 01"                //lea edx, [esi+1]
+	+	"8A 06"                   //@@strlen:  mov al, byte ptr [esi]
+	+	"46"                      //           inc esi
+	+	"84 C0"                   //           test al, al
+	+	"75 F9"                   //           jne @@strlen
+	+	"57"                      //push edi
+	+	"2B F2"                   //sub esi, edx
+	+	"33 FF"                   //xor edi, edi
+	+	"85 F6"                   //test esi, esi
+	+	"7E ??"                   //jle @@quit
+	+	"53"                      //push ebx
+	+	"8A 14 0F"                //@@loop:  mov dl, byte ptr [edi+ecx]
+	+	"B0 DB"                   //         mov al, 0DBh      ; 'a' + 'z'
+	+	"2A C2"                   //         sub al, dl
+	;
+
+	const addr = Exe.FindHex(code);
+	if (addr < 0)
+		throw Error("Atbash routine not found");
+
+	$$(_ + '2.1 - Force the bypass by turning the JNE into a JMP')
+	Exe.SetUint8(addr + 0xA, 0xEB);
+
+	return true;
+};
+
+///
+/// \brief Only relevant for clients that actually ship the scrambled tables.
+///
+DisableXmlObfuscation.validate = () =>
+	Exe.FindText("PetTalkTable.xml", PHYSICAL, false) > 0;
