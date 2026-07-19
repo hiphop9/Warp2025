@@ -1,0 +1,309 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2026 Louis T Steinhil                                    *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+*   WARP is free software: you can redistribute it and/or modify           *
+*   it under the terms of the GNU General Public License as published by   *
+*   the Free Software Foundation, either version 3 of the License, or      *
+*   (at your option) any later version.                                    *
+*                                                                          *
+*   This program is distributed in the hope that it will be useful,        *
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of         *
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          *
+*   GNU General Public License for more details.                           *
+*                                                                          *
+*   You should have received a copy of the GNU General Public License      *
+*   along with this program.  If not, see <http://www.gnu.org/licenses/>.  *
+*                                                                          *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Louis T Steinhil , Stingor                             *
+*   Created Date  : 2026-07-02                                             *
+*   Last Modified : 2026-07-19                                             *
+*                                                                          *
+*   Description   : Gates UINewSkillListWnd::DrawContent so its            *
+*                   immediate-mode grid is rebuilt only after a render     *
+*                   input changes. Fully signature-resolved: every         *
+*                   address and member offset is derived from the binary,  *
+*                   so it applies to any client that carries the modern    *
+*                   ALT+S Skill Tree (no per-build hardcoding).            *
+*                                                                          *
+\**************************************************************************/
+
+///
+/// \brief Signature-resolved UI FPS gate for the modern Skill Tree.
+///
+/// `UINewSkillListWnd::DrawContent` clears and rebuilds its complete render-node
+/// list every frame (texture-key creation, texture-cache lookup and an O(n)
+/// GetSkillInfoAt walk for every node). This patch redirects the DrawContent
+/// vtable slot to a static EXE gate. The original draw runs on the first frame
+/// and whenever the native dirty byte, self pointer, window size, tab, scroll,
+/// hover, held-points or total skill-point-level changes; idle frames return
+/// before the node-list clear, retaining the last geometry.
+///
+/// Discovery chain (byte/string only, no disassembler needed):
+///   1. DrawContent  = function that pushes the unique skill-point format string
+///   2. dirty offset = tail 'mov byte [esi+dirty], 0'  (C6 86 ?? ?? 00 00 00)
+///   3. tab/scroll/hover/points = constant deltas below the dirty offset
+///   4. skillPointLevel global  = 'mov ebx, [global]'  (8B 1D ?? ?? ?? ??)
+///   5. vtable slot  = the single .rdata dword equal to DrawContent's VA
+///
+/// The gate assembly is unchanged from the original; only its operands are
+/// resolved at patch time. No DLL, recv hook or runtime code patching is used.
+///
+ReduceExpensiveUIRender = function(_)
+{
+	//===================================================================//
+	// 1 - Locate DrawContent via the unique skill-point format string   //
+	//===================================================================//
+	$$(_, 1, `Find the skill-point format string`)
+	const FMT = "%s^0000ff%d^000000(^ff0000%d^000000) / %d";
+
+	const fmtAddr = Exe.FindText(FMT);
+	if (fmtAddr < 0)
+		throw Error("ReduceExpensiveUIRender: skill-point format string not found");
+
+	$$(_, 1.1, `Find the reference to it inside DrawContent`)
+	const pushAddr = Exe.FindHex(PUSH(fmtAddr));
+	if (pushAddr < 0)
+		throw Error("ReduceExpensiveUIRender: format-string reference not found");
+	if (Exe.FindHex(PUSH(fmtAddr), pushAddr + 5) > 0)
+		throw Error("ReduceExpensiveUIRender: format-string reference is not unique");
+
+	$$(_, 1.2, `Walk back to the DrawContent prologue`)
+	// The enclosing function opens with the standard EBP+SEH prologue.
+	// Take the match closest to (and not after) the string push.
+	const PROLOGUE = "55 8B EC 6A FF 68"; // push ebp; mov ebp,esp; push -1; push <seh>
+	let drawPhy = -1;
+	let scan = pushAddr - 0x600;
+	if (scan < 0)
+		scan = 0;
+	while (true)
+	{
+		const hit = Exe.FindHex(PROLOGUE, scan, pushAddr + 1);
+		if (hit < 0)
+			break;
+		drawPhy = hit;
+		scan = hit + 1;
+	}
+	if (drawPhy < 0)
+		throw Error("ReduceExpensiveUIRender: DrawContent prologue not found");
+
+	const drawVir = Exe.Phy2Vir(drawPhy, CODE);
+
+	//===================================================================//
+	// 2 - Derive the member offsets from the native dirty byte          //
+	//===================================================================//
+	$$(_, 2, `Read the native dirty-byte offset`)
+	// Tail of DrawContent: mov byte ptr [esi + dirty], 0
+	const dirtyClear = Exe.FindHex("C6 86 ?? ?? 00 00 00", drawPhy, drawPhy + 0x600);
+	if (dirtyClear < 0)
+		throw Error("ReduceExpensiveUIRender: dirty-byte clear not found");
+
+	// 16-bit displacement immediately after 'C6 86'
+	const dirty = Exe.GetUint16(dirtyClear + 2);
+	if (dirty < 0x100 || dirty > 0x400)
+		throw Error(`ReduceExpensiveUIRender: dirty offset out of range (0x${dirty.toString(16)})`);
+
+	// Skill-tree fields sit at fixed distances below the dirty byte
+	// (verified across the 2025-06-04 and 2025-07-16 layouts).
+	const off = {
+		width : 0x14,          // UIWindow base field (build-stable)
+		height: 0x18,          // UIWindow base field (build-stable)
+		hover : dirty - 0x21,
+		tab   : dirty - 0x1D,
+		scroll: dirty - 0x19,
+		points: dirty - 0x05,
+		dirty : dirty
+	};
+
+	//===================================================================//
+	// 3 - Locate the total-skill-point-level global                     //
+	//===================================================================//
+	$$(_, 3, `Locate the skill-point-level global`)
+	// mov ebx, dword ptr [g_skillPointLevel]
+	const globLoad = Exe.FindHex("8B 1D ?? ?? ?? ??", drawPhy, drawPhy + 0x600);
+	if (globLoad < 0)
+		throw Error("ReduceExpensiveUIRender: skill-point-level load not found");
+	if (Exe.FindHex("8B 1D ?? ?? ?? ??", globLoad + 6, drawPhy + 0x600) > 0)
+		throw Error("ReduceExpensiveUIRender: skill-point-level load is not unique");
+
+	const skillPointLevelVir = Exe.GetUint32(globLoad + 2);
+	if (skillPointLevelVir < Exe.ImageBase)
+		throw Error("ReduceExpensiveUIRender: skill-point-level global looks invalid");
+
+	//===================================================================//
+	// 4 - Locate the DrawContent vtable slot                            //
+	//===================================================================//
+	$$(_, 4, `Locate the DrawContent vtable slot`)
+	// The vtable lives in read-only data (.rdata), which sits past the code
+	// section; FindHex defaults to CODE, so search from the end of CODE to EOF.
+	const dataBegin = Exe.GetSectEnd(CODE);
+	const dataEnd   = Exe.FileSize;
+	const vtablePhy = Exe.FindHex(drawVir.toHex(), dataBegin, dataEnd);
+	if (vtablePhy < 0)
+		throw Error("ReduceExpensiveUIRender: DrawContent vtable slot not found");
+	if (Exe.FindHex(drawVir.toHex(), vtablePhy + 4, dataEnd) > 0)
+		throw Error("ReduceExpensiveUIRender: DrawContent address is not unique (ambiguous vtable)");
+
+	if (Exe.GetUint32(vtablePhy) !== drawVir)
+		throw Error("ReduceExpensiveUIRender: unexpected vtable slot content");
+
+	//===================================================================//
+	// 5 - Build the gate + state, patch the vtable slot                 //
+	//===================================================================//
+	$$(_, 5, `Allocate the gate state`)
+	const stateSize = 0x24;
+	const [statePhy, stateVir] = Exe.Allocate(stateSize, 4);
+	Exe.SetHex(statePhy, " 00".repeat(stateSize).trim());
+
+	$$(_, 5.1, `Assemble and inject the repaint gate`)
+	const code = ReduceExpensiveUIRender.buildGate(stateVir, drawVir, skillPointLevelVir, off);
+	const [codePhy, codeVir] = Exe.Allocate(code.byteCount(), 0x10);
+	Exe.SetHex(codePhy, code.finish(codeVir));
+
+	$$(_, 5.2, `Redirect the DrawContent vtable slot at 0x${vtablePhy.toString(16).toUpperCase()}`)
+	Exe.SetUint32(vtablePhy, codeVir);
+
+	return true;
+};
+
+///
+/// \brief Minimal byte assembler with label/call/jcc fixups.
+///
+ReduceExpensiveUIRender.asm = function()
+{
+	const bytes  = [];
+	const labels = {};
+	const fixups = [];
+
+	const put32 = function(out, pos, value)
+	{
+		const v = value >>> 0;
+		out[pos]     =  v         & 0xFF;
+		out[pos + 1] = (v >>> 8)  & 0xFF;
+		out[pos + 2] = (v >>> 16) & 0xFF;
+		out[pos + 3] = (v >>> 24) & 0xFF;
+	};
+
+	return {
+		byteCount: function() { return bytes.length; },
+
+		emit: function(...values)
+		{
+			for (const value of values)
+				bytes.push(value & 0xFF);
+		},
+		dword: function(value)
+		{
+			const pos = bytes.length;
+			bytes.push(0, 0, 0, 0);
+			put32(bytes, pos, value);
+		},
+		label: function(name)
+		{
+			if (Object.prototype.hasOwnProperty.call(labels, name))
+				throw Error(`ReduceExpensiveUIRender: duplicate label ${name}`);
+			labels[name] = bytes.length;
+		},
+		call: function(target)
+		{
+			bytes.push(0xE8);
+			const pos = bytes.length;
+			bytes.push(0, 0, 0, 0);
+			fixups.push({pos, target});
+		},
+		jcc: function(opcode, target)
+		{
+			bytes.push(0x0F, opcode);
+			const pos = bytes.length;
+			bytes.push(0, 0, 0, 0);
+			fixups.push({pos, target});
+		},
+		finish: function(baseVir)
+		{
+			const out = bytes.slice();
+			for (const fixup of fixups)
+			{
+				if (typeof fixup.target === "string" &&
+					!Object.prototype.hasOwnProperty.call(labels, fixup.target))
+					throw Error(`ReduceExpensiveUIRender: unresolved label ${fixup.target}`);
+				const targetVir = typeof fixup.target === "string"
+					? baseVir + labels[fixup.target]
+					: fixup.target;
+				put32(out, fixup.pos, targetVir - (baseVir + fixup.pos + 4));
+			}
+			return out.map(v => (v & 0xFF).toString(16).padStart(2, "0")).join(" ");
+		}
+	};
+};
+
+///
+/// \brief Emit the repaint gate. ECX = this on entry (thiscall vtable slot).
+///
+/// State layout (0x24 bytes):
+///   0x00 valid   0x04 self    0x08 width   0x0C height
+///   0x10 hover   0x14 tab     0x18 scroll  0x1C points   0x20 skillPointLevel
+///
+ReduceExpensiveUIRender.buildGate = function(stateVir, drawVir, skillPointLevelVir, off)
+{
+	const S = {valid: 0x00, self: 0x04, spl: 0x20};
+	const fields = [
+		{object: off.width,  state: 0x08},
+		{object: off.height, state: 0x0C},
+		{object: off.hover,  state: 0x10},
+		{object: off.tab,    state: 0x14},
+		{object: off.scroll, state: 0x18},
+		{object: off.points, state: 0x1C}
+	];
+
+	const a = ReduceExpensiveUIRender.asm();
+
+	a.emit(0x56, 0x8B, 0xF1);                                 // push esi ; mov esi, ecx
+	a.emit(0x83, 0x3D); a.dword(stateVir + S.valid); a.emit(0x00); // cmp [valid], 0
+	a.jcc(0x84, "paint");                                     // je paint  (first call)
+	a.emit(0x3B, 0x35); a.dword(stateVir + S.self);           // cmp esi, [self]
+	a.jcc(0x85, "paint");                                     // jne paint (recreated window)
+	a.emit(0x80, 0xBE); a.dword(off.dirty); a.emit(0x00);     // cmp byte [esi+dirty], 0
+	a.jcc(0x85, "paint");                                     // jne paint (native dirty)
+
+	for (const f of fields)
+	{
+		a.emit(0x8B, 0x86); a.dword(f.object);                // mov eax, [esi+object]
+		a.emit(0x3B, 0x05); a.dword(stateVir + f.state);      // cmp eax, [state]
+		a.jcc(0x85, "paint");                                 // jne paint
+	}
+
+	a.emit(0xA1); a.dword(skillPointLevelVir);                // mov eax, [g_skillPointLevel]
+	a.emit(0x3B, 0x05); a.dword(stateVir + S.spl);            // cmp eax, [spl]
+	a.jcc(0x85, "paint");                                     // jne paint
+	a.emit(0x5E, 0xC3);                                       // pop esi ; ret  (retain nodes)
+
+	a.label("paint");
+	a.emit(0x8B, 0xCE);                                       // mov ecx, esi
+	a.call(drawVir);                                          // call DrawContent
+	a.emit(0x89, 0x35); a.dword(stateVir + S.self);           // mov [self], esi
+	for (const f of fields)
+	{
+		a.emit(0x8B, 0x86); a.dword(f.object);                // mov eax, [esi+object]
+		a.emit(0xA3); a.dword(stateVir + f.state);            // mov [state], eax
+	}
+	a.emit(0xA1); a.dword(skillPointLevelVir);                // mov eax, [g_skillPointLevel]
+	a.emit(0xA3); a.dword(stateVir + S.spl);                  // mov [spl], eax
+	a.emit(0xC7, 0x05); a.dword(stateVir + S.valid);          // mov [valid], 1
+	a.emit(0x01, 0x00, 0x00, 0x00);
+	a.emit(0x5E, 0xC3);                                       // pop esi ; ret
+
+	return a;
+};
+
+///
+/// \brief Applicable to any client carrying the modern ALT+S Skill Tree.
+///
+ReduceExpensiveUIRender.validate = function()
+{
+	return Exe.FindText("%s^0000ff%d^000000(^ff0000%d^000000) / %d") > 0;
+};
