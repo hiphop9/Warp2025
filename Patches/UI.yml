@@ -332,6 +332,12 @@ CustomUI:
             author : Victor Hugo
             desc : Adds thousand separators (commas) to the Zeny display in the Barter window for better readability (e.g., 1,000,000 z).
 
+        - KeepJobExpBarVisible:
+            title : Keep Job EXP Bar Visible at Max Job Level
+            recommend : no
+            author : Victor Hugo
+            desc : Keeps the Job EXP bar visible when a character reaches the configured maximum Job Level.
+
 CaseInsensitiveSearch:
     title: CASE INSENSITIVE SEARCH
     mutex: false

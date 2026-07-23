@@ -1,0 +1,43 @@
+/**************************************************************************\
+*                                                                          *
+*   Copyright (C) 2026 Victor Hugo                                         *
+*                                                                          *
+*   This file is a part of WARP project (specific to RO clients)           *
+*                                                                          *
+|**************************************************************************|
+*                                                                          *
+*   Author(s)     : Victor Hugo                                            *
+*   Created Date  : 2026-07-22                                             *
+*   Last Modified : 2026-07-22                                             *
+*                                                                          *
+\**************************************************************************/
+
+KeepJobExpBarVisible = function()
+{
+    const _ = 'KeepJobExpBarVisible : ';
+    const expectedSize = 15075840;
+    const pattern =
+        '39 05 ?? ?? ?? ?? 7C 09 6A 58 68 38 FF FF FF EB 0C ' +
+        '8B ?? ?? ?? ?? ?? 83 C0 58 50 6A 55';
+
+    if (Exe.FileSize !== expectedSize)
+        throw Error(`Unsupported client size ${Exe.FileSize}; expected ${expectedSize}.`);
+
+    const addr = Exe.FindHex(pattern, 0, Exe.FileSize);
+    if (addr < 0)
+        throw Error('Job EXP bar visibility pattern not found.');
+
+    const duplicate = Exe.FindHex(pattern, addr + 1, Exe.FileSize);
+    if (duplicate >= 0)
+        throw Error('Job EXP bar visibility pattern is not unique.');
+
+    const branch = addr + 6;
+    const before = (Exe.GetHex(branch, 2) || '').replace(/\s+/g, '').toUpperCase();
+    if (before !== '7C09')
+        throw Error(`Unexpected Job EXP bar branch: ${before}.`);
+
+    Exe.SetHex(branch, 'EB 09');
+
+    $$(_, 1, `Job EXP bar visibility branch patched at file offset 0x${branch.toString(16)}.`);
+    return true;
+};
