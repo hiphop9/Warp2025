@@ -22,7 +22,7 @@
 *                                                                          *
 *   Author(s)     : Louis T Steinhil , Stingor                             *
 *   Created Date  : 2026-07-02                                             *
-*   Last Modified : 2026-07-19                                             *
+*   Last Modified : 2026-07-23                                             *
 *                                                                          *
 *   Description   : Gates UINewSkillListWnd::DrawContent so its            *
 *                   immediate-mode grid is rebuilt only after a render     *
@@ -30,6 +30,11 @@
 *                   address and member offset is derived from the binary,  *
 *                   so it applies to any client that carries the modern    *
 *                   ALT+S Skill Tree (no per-build hardcoding).            *
+*                                                                          *
+*                   Optional idle-repaint floor keeps the character        *
+*                   preview animating while the window sits idle. The      *
+*                   GetTickCount IAT slot it needs is also resolved from    *
+*                   the import table, so nothing is hardcoded.             *
 *                                                                          *
 \**************************************************************************/
 
@@ -43,6 +48,12 @@
 /// and whenever the native dirty byte, self pointer, window size, tab, scroll,
 /// hover, held-points or total skill-point-level changes; idle frames return
 /// before the node-list clear, retaining the last geometry.
+///
+/// The skipped DrawContent also owns the character-preview avatar draw, whose
+/// frame index is timer-derived, so a pure gate freezes the preview on idle
+/// frames. An optional repaint floor (user-selectable interval) forces a full
+/// redraw every N ms through kernel32!GetTickCount to keep it animating; the
+/// GetTickCount IAT slot is resolved from the import table, not hardcoded.
 ///
 /// Discovery chain (byte/string only, no disassembler needed):
 ///   1. DrawContent  = function that pushes the unique skill-point format string
@@ -153,22 +164,144 @@ ReduceExpensiveUIRender = function(_)
 		throw Error("ReduceExpensiveUIRender: unexpected vtable slot content");
 
 	//===================================================================//
-	// 5 - Build the gate + state, patch the vtable slot                 //
+	// 5 - Resolve the optional idle-repaint floor (avatar animation)    //
 	//===================================================================//
-	$$(_, 5, `Allocate the gate state`)
-	const stateSize = 0x24;
+	$$(_, 5, `Ask for the idle-repaint floor`)
+	let repaintFloorMs = ReduceExpensiveUIRender.askRepaintFloor(_);
+	let tickCountIatVir = 0;
+	if (repaintFloorMs > 0)
+	{
+		$$(_, 5.1, `Resolve the GetTickCount IAT slot from the import table`)
+		tickCountIatVir = ReduceExpensiveUIRender.findImportIat("kernel32.dll", "GetTickCount");
+
+		// Confirm the client actually calls through that slot (FF 15 <slot>);
+		// if it does not, the slot is unusable - drop back to Off rather than fail.
+		if (tickCountIatVir < 0 || Exe.FindHex("FF 15 " + tickCountIatVir.toHex()) < 0)
+		{
+			$$(_, 5.2, `GetTickCount IAT not resolved - idle repaint disabled`)
+			repaintFloorMs = 0;
+			tickCountIatVir = 0;
+		}
+	}
+
+	//===================================================================//
+	// 6 - Build the gate + state, patch the vtable slot                 //
+	//===================================================================//
+	$$(_, 6, `Allocate the gate state`)
+	// 0x24 fixed fields + 0x04 lastTick scratch used only by the repaint floor.
+	const stateSize = 0x28;
 	const [statePhy, stateVir] = Exe.Allocate(stateSize, 4);
 	Exe.SetHex(statePhy, " 00".repeat(stateSize).trim());
 
-	$$(_, 5.1, `Assemble and inject the repaint gate`)
-	const code = ReduceExpensiveUIRender.buildGate(stateVir, drawVir, skillPointLevelVir, off);
+	$$(_, 6.1, `Assemble and inject the repaint gate`)
+	const code = ReduceExpensiveUIRender.buildGate(
+		stateVir, drawVir, skillPointLevelVir, off, repaintFloorMs, tickCountIatVir);
 	const [codePhy, codeVir] = Exe.Allocate(code.byteCount(), 0x10);
 	Exe.SetHex(codePhy, code.finish(codeVir));
 
-	$$(_, 5.2, `Redirect the DrawContent vtable slot at 0x${vtablePhy.toString(16).toUpperCase()}`)
+	$$(_, 6.2, `Redirect the DrawContent vtable slot at 0x${vtablePhy.toString(16).toUpperCase()}`)
 	Exe.SetUint32(vtablePhy, codeVir);
 
 	return true;
+};
+
+///
+/// \brief Ask how often the gate may repaint while the window sits idle.
+///
+/// The gate skips the whole DrawContent, which also owns the character-preview
+/// draw (frame index derived from the game timer). With no time input the preview
+/// freezes on idle frames; a minimum repaint interval keeps it animating, and
+/// longer intervals cost less. Returns the interval in ms, or 0 for the original
+/// freeze-on-idle behaviour.
+///
+ReduceExpensiveUIRender.askRepaintFloor = function(_)
+{
+	const choices = [
+		"Off - cheapest, preview freezes while idle",
+		"200 ms",
+		"400 ms",
+		"600 ms",
+		"800 ms"
+	];
+
+	const sel = Exe.GetUserInput(
+		'$skillTreeRepaintFloor',
+		D_Choice,
+		"Skill Tree idle repaint",
+		"This patch skips the Skill Tree repaint when nothing changed. That same repaint draws " +
+		"the character preview, so with no repaint the preview <b>stops animating</b> while the " +
+		"window sits idle.<br><br>" +
+		"Choose a minimum repaint interval to keep it animating. The preview sprite only advances " +
+		"about every 600 ms, so repainting faster than that redraws the same frame for no benefit. " +
+		"Longer intervals are cheaper.<br><br>" +
+		"<b>Off</b> is the cheapest and matches the original behaviour of this patch.",
+		"600 ms",
+		{ choices: choices }
+	);
+
+	// A skipped/accepted-without-change dialog returns falsy. That is NOT a request
+	// for Off - it means "keep the default", so apply the recommended 600ms instead
+	// of silently disabling the floor. Off stays reachable by explicitly picking the
+	// "Off" entry (it parses to 0 below).
+	const DEFAULT_MS = 600;
+	if (!sel)
+	{
+		$$(_, 5.01, `No active choice - applying default idle repaint ${DEFAULT_MS}ms`)
+		return DEFAULT_MS;
+	}
+
+	const ms = parseInt(sel, 10);
+	if (Number.isNaN(ms))            // the "Off" entry -> disable the floor
+	{
+		$$(_, 5.01, `Skill Tree idle repaint: Off`)
+		return 0;
+	}
+	$$(_, 5.01, `Skill Tree idle repaint: ${ms}ms`)
+	return ms;
+};
+
+///
+/// \brief Resolve the VA of an import's IAT slot by walking the import directory.
+///
+/// Signature-only: matches the DLL name and the IMAGE_IMPORT_BY_NAME entry, then
+/// returns FirstThunk + offset (the dword the client CALLs through). Nothing is
+/// hardcoded, so the slot is tracked across builds. Returns -1 if not present.
+///
+ReduceExpensiveUIRender.findImportIat = function(dllWanted, funcWanted)
+{
+	const wantDll = dllWanted.toLowerCase();
+	let addr = Exe.GetDirAddr(D_Import, PHYSICAL);
+
+	for ( ; ; addr += 20)
+	{
+		let lutRva     = Exe.GetUint32(addr);      // OriginalFirstThunk (RVA)
+		const dllRva   = Exe.GetUint32(addr + 12); // DLL name (RVA)
+		const iatRva   = Exe.GetUint32(addr + 16); // FirstThunk / IAT (RVA)
+		if (dllRva <= 0)
+			break;                                 // end of descriptor array
+		if (lutRva === 0)
+			lutRva = iatRva;                       // some linkers null the LUT
+
+		const dllName = Exe.GetText(Exe.Rva2Phy(dllRva));
+		if (typeof dllName !== "string" || dllName.toLowerCase() !== wantDll)
+			continue;
+
+		const lutPhy = Exe.Rva2Phy(lutRva);
+		const iatVir = iatRva + Exe.ImageBase;
+		for (let offset = 0; ; offset += 4)
+		{
+			const thunk = Exe.GetInt32(lutPhy + offset);
+			if (thunk === 0)
+				break;                             // end of this DLL's thunks
+			if (thunk > 0)                         // import by name (not ordinal)
+			{
+				const funcName = Exe.GetText(Exe.Rva2Phy(thunk) + 2); // skip Hint word
+				if (funcName === funcWanted)
+					return iatVir + offset;
+			}
+		}
+	}
+	return -1;
 };
 
 ///
@@ -244,13 +377,18 @@ ReduceExpensiveUIRender.asm = function()
 ///
 /// \brief Emit the repaint gate. ECX = this on entry (thiscall vtable slot).
 ///
-/// State layout (0x24 bytes):
+/// State layout (0x28 bytes):
 ///   0x00 valid   0x04 self    0x08 width   0x0C height
 ///   0x10 hover   0x14 tab     0x18 scroll  0x1C points   0x20 skillPointLevel
+///   0x24 lastTick  (idle-repaint floor scratch; untouched when the floor is Off)
 ///
-ReduceExpensiveUIRender.buildGate = function(stateVir, drawVir, skillPointLevelVir, off)
+/// When repaintFloorMs > 0 the gate reads kernel32!GetTickCount through
+/// tickCountIatVir, so the skipped character preview keeps animating; pass 0 for
+/// both to keep the original freeze-on-idle behaviour.
+///
+ReduceExpensiveUIRender.buildGate = function(stateVir, drawVir, skillPointLevelVir, off, repaintFloorMs, tickCountIatVir)
 {
-	const S = {valid: 0x00, self: 0x04, spl: 0x20};
+	const S = {valid: 0x00, self: 0x04, spl: 0x20, lastTick: 0x24};
 	const fields = [
 		{object: off.width,  state: 0x08},
 		{object: off.height, state: 0x0C},
@@ -280,6 +418,17 @@ ReduceExpensiveUIRender.buildGate = function(stateVir, drawVir, skillPointLevelV
 	a.emit(0xA1); a.dword(skillPointLevelVir);                // mov eax, [g_skillPointLevel]
 	a.emit(0x3B, 0x05); a.dword(stateVir + S.spl);            // cmp eax, [spl]
 	a.jcc(0x85, "paint");                                     // jne paint
+
+	// Idle-repaint floor: nothing changed, but the skipped DrawContent also owns
+	// the timer-animated character preview. Force a full repaint once the interval
+	// has elapsed so the preview keeps moving. GetTickCount preserves ESI (=this).
+	if (repaintFloorMs > 0)
+	{
+		a.emit(0xFF, 0x15); a.dword(tickCountIatVir);         // call [GetTickCount]
+		a.emit(0x2B, 0x05); a.dword(stateVir + S.lastTick);   // sub eax, [lastTick]
+		a.emit(0x3D); a.dword(repaintFloorMs);                // cmp eax, floor
+		a.jcc(0x83, "paint");                                 // jae paint (unsigned: wrap-safe)
+	}
 	a.emit(0x5E, 0xC3);                                       // pop esi ; ret  (retain nodes)
 
 	a.label("paint");
@@ -295,6 +444,11 @@ ReduceExpensiveUIRender.buildGate = function(stateVir, drawVir, skillPointLevelV
 	a.emit(0xA3); a.dword(stateVir + S.spl);                  // mov [spl], eax
 	a.emit(0xC7, 0x05); a.dword(stateVir + S.valid);          // mov [valid], 1
 	a.emit(0x01, 0x00, 0x00, 0x00);
+	if (repaintFloorMs > 0)
+	{
+		a.emit(0xFF, 0x15); a.dword(tickCountIatVir);         // call [GetTickCount]
+		a.emit(0xA3); a.dword(stateVir + S.lastTick);         // mov [lastTick], eax
+	}
 	a.emit(0x5E, 0xC3);                                       // pop esi ; ret
 
 	return a;

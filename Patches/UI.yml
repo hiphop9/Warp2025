@@ -227,7 +227,7 @@ CustomUI:
         - ReduceExpensiveUIRender:
             title : Reduce expensive UI rendering
             recommend : no
-            author : Louis T Steinhil , Stingor
+            author : Louis T Steinhil , Stingor, CrazyBebop
             desc : Repaints the ALT+S Skill Tree only when its tab, hover, scroll, points, size, total skill-point level, or native dirty state changes, retaining the last render nodes on idle frames. Signature-resolved (no per-build addresses); static EXE code cave only, no DLL, runtime patcher, or recv interception.
 
         - HideZeroDateInGuildWin:
